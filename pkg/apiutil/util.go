@@ -52,16 +52,46 @@ type ListPathRequest struct {
 	EnableFiltered bool
 }
 
+// GenerationTag names the generation command a route write belongs to. See
+// GenerationTag in the API.
+type GenerationTag struct {
+	Tenant     string
+	Generation uint64
+	CommandID  string
+	Speaker    string
+}
+
+// GenerationTagFromAPI converts the API tag; nil stays nil.
+func GenerationTagFromAPI(t *api.GenerationTag) *GenerationTag {
+	if t == nil {
+		return nil
+	}
+	return &GenerationTag{Tenant: t.Tenant, Generation: t.Generation, CommandID: t.CommandId, Speaker: t.Speaker}
+}
+
+// ToAPI converts the tag; nil stays nil.
+func (t *GenerationTag) ToAPI() *api.GenerationTag {
+	if t == nil {
+		return nil
+	}
+	return &api.GenerationTag{Tenant: t.Tenant, Generation: t.Generation, CommandId: t.CommandID, Speaker: t.Speaker}
+}
+
 // AddPathRequest is used by server.AddPath API
 type AddPathRequest struct {
 	VRFID string
 	Paths []*Path
+	// Generation makes the request one command of a generation. All its
+	// paths are applied or none is.
+	Generation *GenerationTag
 }
 
 // AddPathResponse is used by server.AddPath API
 type AddPathResponse struct {
 	UUID  uuid.UUID
 	Error error
+	// Replayed is set for a tagged command that already had a receipt.
+	Replayed bool
 }
 
 type DeletePathRequest struct {
@@ -70,6 +100,9 @@ type DeletePathRequest struct {
 	DeleteAll    bool
 	DeleteFamily *bgp.Family
 	Paths        []*Path
+	// Generation makes the request one command of a generation. A tagged
+	// request names exactly one UUID.
+	Generation *GenerationTag
 }
 
 type LookupOption uint8
