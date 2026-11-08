@@ -26,6 +26,7 @@ require (
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.10.0
 	github.com/vishvananda/netlink v1.3.1
+	go.etcd.io/bbolt v1.4.3
 	go.uber.org/goleak v1.3.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/text v0.41.0
