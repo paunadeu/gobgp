@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/osrg/gobgp/v4/api"
 	"github.com/osrg/gobgp/v4/internal/pkg/genfence"
@@ -914,4 +915,230 @@ func TestGenerationResponsesReportSpeakerID(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, r.SpeakerId)
 	require.Empty(t, lookup(t, c, destinationKey(t, bgp.RF_IPv4_UC, "10.16.2.0/24")).SpeakerId)
+}
+
+func fenceMany(t *testing.T, c api.GoBgpServiceClient, tenant string, generations ...uint64) *api.FenceGenerationsResponse {
+	t.Helper()
+	r, err := c.FenceGenerations(context.Background(), &api.FenceGenerationsRequest{Tenant: tenant, Generations: generations, Speaker: fenceSpeaker})
+	require.NoError(t, err)
+	return r
+}
+
+// A batch fence races commands of all its generations queued behind a busy
+// loop on another connection. For each generation, the commands that
+// succeed are exactly the ones its status in the answer lists, the others
+// are refused, the RIB holds only the listed paths, and nothing lands after.
+func TestFenceGenerationsAckOrdersQueuedCommands(t *testing.T) {
+	h := startFenceServer(t, fenceConfig(t))
+	a, b := h.dial(), h.dial()
+	ctx := context.Background()
+	const generations, commands = 4, 8
+	for round := range 6 {
+		base := uint64(100 + round*generations)
+		type cmd struct {
+			gen    uint64
+			prefix string
+			path   *api.Path
+			id     uuid.UUID
+			err    error
+		}
+		var cmds []*cmd
+		for g := range uint64(generations) {
+			for i := range commands {
+				p := fmt.Sprintf("10.%d.%d.0/24", 120+round, int(g)*commands+i)
+				cmds = append(cmds, &cmd{gen: base + g, prefix: p, path: ucPath(t, p)})
+			}
+		}
+		gens := make([]uint64, generations)
+		for g := range gens {
+			gens[g] = base + uint64(g)
+		}
+		release := blockLoop(t, h.s)
+		var wg sync.WaitGroup
+		var fenced *api.FenceGenerationsResponse
+		var fenceErr error
+		for i, c := range cmds {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				r, err := a.AddPath(ctx, &api.AddPathRequest{TableType: api.TableType_TABLE_TYPE_GLOBAL, Path: c.path, GenerationTag: fenceTag("t", c.gen, c.prefix)})
+				if err != nil {
+					c.err = err
+					return
+				}
+				c.id, _ = uuid.FromBytes(r.Uuid)
+			}()
+			if i == len(cmds)/2 {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					fenced, fenceErr = b.FenceGenerations(ctx, &api.FenceGenerationsRequest{Tenant: "t", Generations: gens, Speaker: fenceSpeaker})
+				}()
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+		release()
+		wg.Wait()
+		require.NoError(t, fenceErr)
+		require.Len(t, fenced.Results, generations)
+
+		var present []string
+		for gi, res := range fenced.Results {
+			require.Equal(t, gens[gi], res.Status.Generation)
+			require.Equal(t, api.GenerationState_GENERATION_STATE_FENCED, res.Status.State)
+			var applied []uuid.UUID
+			for _, c := range cmds {
+				if c.gen != gens[gi] {
+					continue
+				}
+				if c.err != nil {
+					requireCode(t, c.err, codes.FailedPrecondition)
+					continue
+				}
+				applied = append(applied, c.id)
+				present = append(present, c.prefix)
+			}
+			slices.SortFunc(applied, func(a, b uuid.UUID) int { return slices.Compare(a[:], b[:]) })
+			require.Equal(t, applied, pathUUIDs(t, res.Status, api.GenerationPathState_GENERATION_PATH_STATE_CURRENT), "round %d generation %d", round, gens[gi])
+			require.EqualValues(t, len(applied), res.Status.CurrentPaths)
+		}
+		var inRound []string
+		for _, p := range globalPrefixes(t, h.s) {
+			var x, y int
+			if _, err := fmt.Sscanf(p, "10.%d.%d.0/24", &x, &y); err == nil && x == 120+round {
+				inRound = append(inRound, p)
+			}
+		}
+		require.ElementsMatch(t, present, inRound, "round %d", round)
+		for _, g := range gens {
+			_, err := a.AddPath(ctx, &api.AddPathRequest{TableType: api.TableType_TABLE_TYPE_GLOBAL, Path: ucPath(t, fmt.Sprintf("10.%d.250.0/24", 120+round)), GenerationTag: fenceTag("t", g, "late")})
+			requireCode(t, err, codes.FailedPrecondition)
+		}
+	}
+}
+
+// Every tombstone of a batch survives a restart, beyond the cache size.
+func TestFenceGenerationsSurviveRestart(t *testing.T) {
+	cfg := &GenerationFenceConfig{Dir: t.TempDir(), TombstoneCacheSize: 2}
+	h1 := startFenceServer(t, cfg)
+	gens := make([]uint64, 50)
+	for i := range gens {
+		gens[i] = uint64(1000 + i)
+	}
+	r := fenceMany(t, h1.dial(), "t", gens...)
+	require.Len(t, r.Results, len(gens))
+	h1.stop()
+
+	h2 := startFenceServer(t, cfg)
+	c := h2.dial()
+	for i, g := range gens {
+		_, err := c.AddPath(context.Background(), &api.AddPathRequest{TableType: api.TableType_TABLE_TYPE_GLOBAL, Path: ucPath(t, fmt.Sprintf("10.17.%d.0/24", i)), GenerationTag: fenceTag("t", g, "late")})
+		requireCode(t, err, codes.FailedPrecondition)
+		st := getGeneration(t, c, "t", g)
+		require.Equal(t, api.GenerationState_GENERATION_STATE_FENCED, st.State)
+		require.True(t, st.FencedAt.AsTime().Equal(r.Results[i].Status.FencedAt.AsTime()))
+	}
+	require.Empty(t, globalPrefixes(t, h2.s))
+}
+
+// A batch may repeat a generation and may name generations already fenced:
+// each distinct generation is reported once, and an earlier fence keeps its
+// time.
+func TestFenceGenerationsPartialDuplicates(t *testing.T) {
+	h := startFenceServer(t, fenceConfig(t))
+	c := h.dial()
+	before := fence(t, c, "t", 1)
+	r := fenceMany(t, c, "t", 2, 1, 2, 3, 1)
+	require.Len(t, r.Results, 3)
+	var got []uint64
+	var newly []bool
+	for _, res := range r.Results {
+		got = append(got, res.Status.Generation)
+		newly = append(newly, res.NewlyFenced)
+	}
+	require.Equal(t, []uint64{2, 1, 3}, got, "in the order of first mention")
+	require.Equal(t, []bool{true, false, true}, newly)
+	require.True(t, r.Results[1].Status.FencedAt.AsTime().Equal(before.Status.FencedAt.AsTime()))
+	again := fenceMany(t, c, "t", 1, 2, 3)
+	for _, res := range again.Results {
+		require.False(t, res.NewlyFenced)
+	}
+}
+
+// For each generation, the status a batch fence returns is the one a single
+// fence returns.
+func TestFenceGenerationsMatchesSingleFence(t *testing.T) {
+	h := startFenceServer(t, fenceConfig(t))
+	c := h.dial()
+	ctx := context.Background()
+	for g := uint64(1); g <= 3; g++ {
+		for i := range 3 {
+			_, err := c.AddPath(ctx, &api.AddPathRequest{TableType: api.TableType_TABLE_TYPE_GLOBAL, Path: ucPath(t, fmt.Sprintf("10.18.%d.0/24", int(g)*10+i)), GenerationTag: fenceTag("t", g, strconv.Itoa(i))})
+			require.NoError(t, err)
+		}
+	}
+	// One path of generation 2 deleted, one of generation 3 replaced by
+	// generation 1, and a refused command, so every field has something.
+	st := getGeneration(t, c, "t", 2)
+	_, err := c.DeletePath(ctx, &api.DeletePathRequest{TableType: api.TableType_TABLE_TYPE_GLOBAL, Uuid: st.Paths[0].Uuid, GenerationTag: fenceTag("t", 2, "d")})
+	require.NoError(t, err)
+	_, err = c.AddPath(ctx, &api.AddPathRequest{TableType: api.TableType_TABLE_TYPE_GLOBAL, Path: ucPath(t, "10.18.30.0/24"), GenerationTag: fenceTag("t", 1, "take")})
+	require.NoError(t, err)
+
+	batch := fenceMany(t, c, "t", 1, 2, 3)
+	_, err = c.AddPath(ctx, &api.AddPathRequest{TableType: api.TableType_TABLE_TYPE_GLOBAL, Path: ucPath(t, "10.18.99.0/24"), GenerationTag: fenceTag("t", 2, "late")})
+	requireCode(t, err, codes.FailedPrecondition)
+	for _, res := range batch.Results {
+		require.True(t, res.NewlyFenced)
+		single := fence(t, c, "t", res.Status.Generation)
+		require.False(t, single.NewlyFenced)
+		want := single.Status
+		if res.Status.Generation == 2 {
+			require.EqualValues(t, 1, want.RefusedAfterFence)
+			want = proto.Clone(want).(*api.GenerationStatus)
+			want.RefusedAfterFence = 0
+		}
+		require.True(t, proto.Equal(want, res.Status), "generation %d:\nbatch  %v\nsingle %v", res.Status.Generation, res.Status, single.Status)
+	}
+	require.Len(t, pathUUIDs(t, batch.Results[0].Status, api.GenerationPathState_GENERATION_PATH_STATE_CURRENT), 4)
+	require.Len(t, pathUUIDs(t, batch.Results[1].Status, api.GenerationPathState_GENERATION_PATH_STATE_DELETED), 1)
+	require.Len(t, pathUUIDs(t, batch.Results[2].Status, api.GenerationPathState_GENERATION_PATH_STATE_REPLACED), 1)
+}
+
+// The speaker is checked as for a single fence, the answer reports the
+// configured speaker ID, and a refused or malformed batch fences nothing.
+func TestFenceGenerationsChecks(t *testing.T) {
+	cfg := fenceConfig(t)
+	cfg.SpeakerID = fenceSpeaker
+	h := startFenceServer(t, cfg)
+	c := h.dial()
+	ctx := context.Background()
+	_, err := c.FenceGenerations(ctx, &api.FenceGenerationsRequest{Tenant: "t", Generations: []uint64{1, 2}, Speaker: "speaker-2"})
+	requireCode(t, err, codes.FailedPrecondition)
+	_, err = c.FenceGenerations(ctx, &api.FenceGenerationsRequest{Tenant: "t", Generations: []uint64{1, 0}, Speaker: fenceSpeaker})
+	requireCode(t, err, codes.InvalidArgument)
+	_, err = c.FenceGenerations(ctx, &api.FenceGenerationsRequest{Tenant: "t", Speaker: fenceSpeaker})
+	requireCode(t, err, codes.InvalidArgument)
+	big := make([]uint64, MaxFenceGenerations+1)
+	for i := range big {
+		big[i] = uint64(i + 1)
+	}
+	_, err = c.FenceGenerations(ctx, &api.FenceGenerationsRequest{Tenant: "t", Generations: big, Speaker: fenceSpeaker})
+	requireCode(t, err, codes.InvalidArgument)
+	require.ErrorContains(t, err, "at most 1024")
+	for _, g := range []uint64{1, 2, 1025} {
+		require.Equal(t, api.GenerationState_GENERATION_STATE_UNKNOWN, getGeneration(t, c, "t", g).State, "generation %d", g)
+	}
+
+	r, err := c.FenceGenerations(ctx, &api.FenceGenerationsRequest{Tenant: "t", Generations: big[:MaxFenceGenerations], Speaker: fenceSpeaker})
+	require.NoError(t, err)
+	require.Len(t, r.Results, MaxFenceGenerations)
+	for _, res := range r.Results {
+		require.Equal(t, fenceSpeaker, res.Status.SpeakerId)
+		require.Len(t, res.Status.Incarnation, 16)
+	}
+
+	off := startFenceServer(t, nil)
+	_, err = off.dial().FenceGenerations(ctx, &api.FenceGenerationsRequest{Tenant: "t", Generations: []uint64{1}})
+	requireCode(t, err, codes.FailedPrecondition)
 }

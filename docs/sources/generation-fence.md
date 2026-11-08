@@ -64,6 +64,19 @@ server ran before it is applied and listed in the returned status, and every
 later one is refused, on any connection. It is idempotent: `newly_fenced` is
 false and the first fence time is kept when the generation was fenced already.
 
+## FenceGenerations
+
+`FenceGenerations(tenant, generations, speaker)` fences up to 1024
+generations of one tenant in one management operation and one synced write
+of the tombstone store. For each generation it means what `FenceGeneration`
+means, and it is atomic: when it fails, it fenced none of them. A request
+with no generation, more than 1024, a generation 0, or another speaker than
+the configured one is refused before anything is written. A generation
+listed twice is fenced and reported once; `results` has one
+`FenceGenerationResponse` per distinct generation, in the order of first
+mention, each with the same status a single fence returns and its own
+`newly_fenced`.
+
 ## Reading back
 
 - `GetGeneration(tenant, generation)` returns the state (`UNKNOWN`, `LIVE`,
