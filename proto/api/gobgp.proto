@@ -322,6 +322,9 @@ message AddPathResponse {
   bool replayed = 1000;
   // The speaker incarnation the UUID belongs to. See GenerationStatus.
   bytes incarnation = 1001;
+  // The speaker ID the server is configured with; empty when none is set.
+  // Set on every AddPath answer, tagged or not.
+  string speaker_id = 1002;
 }
 
 message DeletePathRequest {
@@ -1647,6 +1650,9 @@ message GenerationStatus {
   // restart either, so a generation unknown to a new incarnation owns
   // nothing in its RIB. Tombstones are durable and survive it.
   bytes incarnation = 5;
+  // The speaker ID the server is configured with; empty when none is set.
+  // A client compares it with the speaker it meant to ask.
+  string speaker_id = 1000;
   repeated GenerationReceipt receipts = 6;
   repeated GenerationPath paths = 7;
   // Tagged commands refused because the generation was fenced.
@@ -1709,4 +1715,6 @@ message DestinationLookup {
 message LookupDestinationsResponse {
   repeated DestinationLookup destinations = 1;
   bytes incarnation = 2;
+  // The speaker ID the server is configured with; empty when none is set.
+  string speaker_id = 1000;
 }

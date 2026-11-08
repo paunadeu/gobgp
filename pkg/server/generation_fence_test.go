@@ -875,3 +875,43 @@ func TestGenerationIndexedDeleteOnLargeTable(t *testing.T) {
 	require.Equal(t, n, tableSize(t, h.s), "the untagged paths are untouched")
 	require.Less(t, indexed, walk, "deletes and lookups do not walk the table")
 }
+
+// Every answer a client checks the speaker by carries the configured speaker
+// ID, and an empty one when none is configured, so a client verifies which
+// speaker answered instead of trusting its own configuration.
+func TestGenerationResponsesReportSpeakerID(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  func(t *testing.T) *GenerationFenceConfig
+		want string
+	}{
+		{"configured", func(t *testing.T) *GenerationFenceConfig {
+			c := fenceConfig(t)
+			c.SpeakerID = fenceSpeaker
+			return c
+		}, fenceSpeaker},
+		{"unset", fenceConfig, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := startFenceServer(t, tc.cfg(t))
+			c := h.dial()
+			ctx := context.Background()
+			tagged, err := c.AddPath(ctx, &api.AddPathRequest{TableType: api.TableType_TABLE_TYPE_GLOBAL, Path: ucPath(t, "10.16.0.0/24"), GenerationTag: fenceTag("t", 1, "a")})
+			require.NoError(t, err)
+			require.Equal(t, tc.want, tagged.SpeakerId)
+			untagged, err := c.AddPath(ctx, &api.AddPathRequest{TableType: api.TableType_TABLE_TYPE_GLOBAL, Path: ucPath(t, "10.16.1.0/24")})
+			require.NoError(t, err)
+			require.Equal(t, tc.want, untagged.SpeakerId)
+			require.Equal(t, tc.want, getGeneration(t, c, "t", 1).SpeakerId)
+			require.Equal(t, tc.want, fence(t, c, "t", 1).Status.SpeakerId)
+			require.Equal(t, tc.want, lookup(t, c, destinationKey(t, bgp.RF_IPv4_UC, "10.16.0.0/24")).SpeakerId)
+		})
+	}
+	// Without the fence there is no speaker ID either.
+	h := startFenceServer(t, nil)
+	c := h.dial()
+	r, err := c.AddPath(context.Background(), &api.AddPathRequest{TableType: api.TableType_TABLE_TYPE_GLOBAL, Path: ucPath(t, "10.16.2.0/24")})
+	require.NoError(t, err)
+	require.Empty(t, r.SpeakerId)
+	require.Empty(t, lookup(t, c, destinationKey(t, bgp.RF_IPv4_UC, "10.16.2.0/24")).SpeakerId)
+}

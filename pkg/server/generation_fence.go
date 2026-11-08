@@ -706,6 +706,15 @@ func (s *BgpServer) generationIncarnation() []byte {
 	return uuidBytes(s.generations.incarnation)
 }
 
+// generationSpeakerID is the configured speaker ID, empty when none is set.
+// The configuration does not change after NewBgpServer.
+func (s *BgpServer) generationSpeakerID() string {
+	if c := s.generations.cfg; c != nil {
+		return c.SpeakerID
+	}
+	return ""
+}
+
 func timestampOrNil(t time.Time) *tspb.Timestamp {
 	if t.IsZero() {
 		return nil
@@ -734,6 +743,7 @@ func (s *BgpServer) generationStatus(k genKey) (*api.GenerationStatus, error) {
 		Tenant:      k.tenant,
 		Generation:  k.generation,
 		Incarnation: uuidBytes(idx.incarnation),
+		SpeakerId:   s.generationSpeakerID(),
 		State:       api.GenerationState_GENERATION_STATE_UNKNOWN,
 	}
 	rec := idx.records[k]
@@ -883,6 +893,7 @@ func (s *BgpServer) LookupDestinations(ctx context.Context, r *api.LookupDestina
 	err := s.mgmtOperationWithContext(ctx, func() error {
 		idx := s.generations
 		resp.Incarnation = uuidBytes(idx.incarnation)
+		resp.SpeakerId = s.generationSpeakerID()
 		for _, k := range keys {
 			d := &api.DestinationLookup{Key: k.key}
 			resp.Destinations = append(resp.Destinations, d)

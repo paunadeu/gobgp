@@ -584,7 +584,7 @@ func (s *server) AddPath(ctx context.Context, r *api.AddPathRequest) (*api.AddPa
 
 	id := path[0].UUID
 	uuidBytes, err = id.MarshalBinary()
-	resp := &api.AddPathResponse{Uuid: uuidBytes}
+	resp := &api.AddPathResponse{Uuid: uuidBytes, SpeakerId: s.bgpServer.generationSpeakerID()}
 	if tag != nil {
 		resp.Replayed = path[0].Replayed
 		resp.Incarnation = s.bgpServer.generationIncarnation()
