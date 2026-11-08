@@ -687,6 +687,10 @@ func (s *server) FenceGeneration(ctx context.Context, r *api.FenceGenerationRequ
 	return s.bgpServer.FenceGeneration(ctx, r)
 }
 
+func (s *server) FenceGenerations(ctx context.Context, r *api.FenceGenerationsRequest) (*api.FenceGenerationsResponse, error) {
+	return s.bgpServer.FenceGenerations(ctx, r)
+}
+
 func (s *server) GetGeneration(ctx context.Context, r *api.GetGenerationRequest) (*api.GetGenerationResponse, error) {
 	return s.bgpServer.GetGeneration(ctx, r)
 }

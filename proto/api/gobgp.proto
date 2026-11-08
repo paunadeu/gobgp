@@ -65,6 +65,7 @@ service GoBgpService {
 
   // Generation fence. See GenerationTag.
   rpc FenceGeneration(FenceGenerationRequest) returns (FenceGenerationResponse);
+  rpc FenceGenerations(FenceGenerationsRequest) returns (FenceGenerationsResponse);
   rpc GetGeneration(GetGenerationRequest) returns (GetGenerationResponse);
   rpc LookupDestinations(LookupDestinationsRequest) returns (LookupDestinationsResponse);
 
@@ -1676,6 +1677,22 @@ message FenceGenerationResponse {
   GenerationStatus status = 1;
   // False when the generation was already fenced.
   bool newly_fenced = 2;
+}
+
+// FenceGenerations fences several generations of one tenant in one step of
+// the management loop and one synced write of the tombstones. For each of
+// them it means what FenceGeneration means; when it fails, it fenced none.
+message FenceGenerationsRequest {
+  string tenant = 1000;
+  // 1 to 1024 entries, none 0. A generation listed twice is fenced and
+  // reported once.
+  repeated uint64 generations = 1001;
+  string speaker = 1002;
+}
+
+message FenceGenerationsResponse {
+  // One per distinct generation, in the order of first mention.
+  repeated FenceGenerationResponse results = 1000;
 }
 
 message GetGenerationRequest {

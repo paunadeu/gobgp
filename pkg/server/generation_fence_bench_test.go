@@ -176,3 +176,35 @@ func BenchmarkFenceGeneration(b *testing.B) {
 		}
 	}
 }
+
+// One FenceGenerations of n new generations: one management operation and
+// one synced write of the tombstone store, plus a status per generation.
+// "single" is n FenceGeneration calls, for comparison.
+func BenchmarkFenceGenerations(b *testing.B) {
+	s := benchServer(b)
+	ctx := context.Background()
+	for _, n := range []int{1, 20, 200, 1000} {
+		b.Run(fmt.Sprintf("batch-%d", n), func(b *testing.B) {
+			for range b.N {
+				gens := make([]uint64, n)
+				for i := range gens {
+					benchFence.seq++
+					gens[i] = uint64(3000000000 + benchFence.seq)
+				}
+				if _, err := s.FenceGenerations(ctx, &api.FenceGenerationsRequest{Tenant: "bench", Generations: gens, Speaker: fenceSpeaker}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		b.Run(fmt.Sprintf("single-%d", n), func(b *testing.B) {
+			for range b.N {
+				for range n {
+					benchFence.seq++
+					if _, err := s.FenceGeneration(ctx, &api.FenceGenerationRequest{Tenant: "bench", Generation: uint64(3000000000 + benchFence.seq), Speaker: fenceSpeaker}); err != nil {
+						b.Fatal(err)
+					}
+				}
+			}
+		})
+	}
+}

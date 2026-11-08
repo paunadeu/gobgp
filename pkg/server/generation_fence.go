@@ -94,6 +94,9 @@ type GenerationFenceConfig struct {
 // GenerationFenceConfig.SettledGenerationRetention.
 const DefaultSettledGenerationRetention = 65536
 
+// MaxFenceGenerations is the most generations one FenceGenerations may name.
+const MaxFenceGenerations = 1024
+
 // MaxLookupDestinations is the most keys one LookupDestinations may name.
 const MaxLookupDestinations = 10000
 
@@ -823,6 +826,62 @@ func (s *BgpServer) FenceGeneration(ctx context.Context, r *api.FenceGenerationR
 			return err
 		}
 		resp = &api.FenceGenerationResponse{Status: st, NewlyFenced: newly}
+		return nil
+	}, true)
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// FenceGenerations fences several generations of a tenant in one management
+// operation and one synced write of the tombstone store. For each of them it
+// means what FenceGeneration means, and it is atomic: when it fails, none of
+// them was fenced by it. A generation listed twice is fenced and reported
+// once; the results follow the order of first mention.
+func (s *BgpServer) FenceGenerations(ctx context.Context, r *api.FenceGenerationsRequest) (*api.FenceGenerationsResponse, error) {
+	if r == nil {
+		return nil, genErr(codes.InvalidArgument, ErrGenerationInvalid, "nil request")
+	}
+	if len(r.Generations) == 0 {
+		return nil, genErr(codes.InvalidArgument, ErrGenerationInvalid, "no generation")
+	}
+	if len(r.Generations) > MaxFenceGenerations {
+		return nil, genErr(codes.InvalidArgument, ErrGenerationInvalid, "%d generations, at most %d per call", len(r.Generations), MaxFenceGenerations)
+	}
+	gens := make([]uint64, 0, len(r.Generations))
+	seen := make(map[uint64]struct{}, len(r.Generations))
+	for _, g := range r.Generations {
+		if err := validateGeneration(r.Tenant, g, r.Speaker); err != nil {
+			return nil, err
+		}
+		if _, dup := seen[g]; !dup {
+			seen[g] = struct{}{}
+			gens = append(gens, g)
+		}
+	}
+	var resp *api.FenceGenerationsResponse
+	err := s.mgmtOperationWithContext(ctx, func() error {
+		idx := s.generations
+		if err := idx.enabled(); err != nil {
+			return err
+		}
+		if err := idx.checkSpeaker(r.Speaker); err != nil {
+			return err
+		}
+		_, newly, err := idx.store.FenceMany(r.Tenant, gens, r.Speaker, time.Now().UTC())
+		if err != nil {
+			return genErr(codes.Unavailable, ErrGenerationStore, "%v", err)
+		}
+		out := &api.FenceGenerationsResponse{Results: make([]*api.FenceGenerationResponse, len(gens))}
+		for i, g := range gens {
+			st, err := s.generationStatus(genKey{r.Tenant, g})
+			if err != nil {
+				return err
+			}
+			out.Results[i] = &api.FenceGenerationResponse{Status: st, NewlyFenced: newly[i]}
+		}
+		resp = out
 		return nil
 	}, true)
 	if err != nil {
