@@ -83,6 +83,8 @@ type options struct {
 	logger      *slog.Logger
 	logLevelVar *slog.LevelVar
 	timingHook  FSMTimingHook
+	// generationFence is set by GenerationFenceOption.
+	generationFence *GenerationFenceConfig
 }
 
 type ServerOption func(*options)
@@ -193,6 +195,7 @@ type BgpServer struct {
 	mrtManager    *mrtManager
 	roaTable      *table.ROATable // no lock of its own, so shared.mu covers it
 	pathIndex     *pathIndex
+	generations   *generationIndex
 	bfdServer     *bfdServer // has its own lock
 	keychainStore *tcpAoKeychainStore
 	logger        *slog.Logger
@@ -244,6 +247,7 @@ func NewBgpServer(opt ...ServerOption) *BgpServer {
 		closeCh:      make(chan struct{}),
 		watcherMap:   make(map[watchEventType][]*watcher),
 		pathIndex:    newPathIndex(),
+		generations:  newGenerationIndex(opts.generationFence),
 		roaManager:   newROAManager(roaTable, logger),
 		roaTable:     roaTable,
 		logger:       logger,
@@ -2629,6 +2633,11 @@ func (s *BgpServer) StopBgp(ctx context.Context, r *api.StopBgpRequest) error {
 		}
 		s.keychainStore.clearAllKeychains()
 		s.bgpConfig.Global = oc.Global{}
+		if err := s.generations.close(); err != nil {
+			s.logger.Warn("failed to close the generation fence store",
+				slog.String("Topic", "BgpServer"),
+				slog.String("Error", err.Error()))
+		}
 		return nil
 	}, false)
 	if err != nil {
@@ -2858,27 +2867,50 @@ func (s *BgpServer) fixupApiPath(vrfId string, pathList []*table.Path) error {
 }
 
 func (s *BgpServer) addPathList(vrfId string, pathList []*table.Path) error {
-	_, err := s.installPathList(vrfId, pathList, false)
+	return s.addPathListChecked(vrfId, pathList, false)
+}
+
+// addPathListChecked installs untagged paths. fromAPI says that a client
+// wrote them, so the families that need a generation tag are refused.
+func (s *BgpServer) addPathListChecked(vrfId string, pathList []*table.Path, fromAPI bool) error {
+	_, err := s.installPathList(vrfId, pathList, false, fromAPI)
 	return err
 }
 
-// installPathList is addPathList that, with capture, also returns the path
-// the global table installed for each path, or nil.
-func (s *BgpServer) installPathList(vrfId string, pathList []*table.Path, capture bool) ([]*table.Path, error) {
+// installPathList is addPathListChecked that, with capture, also returns the
+// path the global table installed for each path, or nil.
+func (s *BgpServer) installPathList(vrfId string, pathList []*table.Path, capture, fromAPI bool) ([]*table.Path, error) {
 	if err := s.fixupApiPath(vrfId, pathList); err != nil {
 		return nil, err
+	}
+	if fromAPI {
+		if err := s.checkUntaggedPaths(pathList); err != nil {
+			return nil, err
+		}
 	}
 	if s.zclient != nil {
 		s.zclient.cacheLock.Lock()
 		s.zclient.nexthopCache.applyToNewPathList(pathList)
 		s.zclient.cacheLock.Unlock()
 	}
-	return s.propagateLocal(pathList, capture), nil
+	installed := s.propagateLocal(pathList, capture)
+	s.noteUntaggedWrites(pathList, uuid.Nil)
+	return installed, nil
 }
 
 func (s *BgpServer) addPathStream(ctx context.Context, vrfId string, pathList []*table.Path) error {
+	return s.addPathStreamTagged(ctx, vrfId, pathList, nil, false)
+}
+
+// addPathStreamTagged is addPathStream for a client. A tagged batch is one
+// command of its generation.
+func (s *BgpServer) addPathStreamTagged(ctx context.Context, vrfId string, pathList []*table.Path, tag *apiutil.GenerationTag, fromAPI bool) error {
 	err := s.mgmtOperationWithContext(ctx, func() error {
-		return s.addPathList(vrfId, pathList)
+		if tag != nil {
+			_, err := s.addTaggedPaths(vrfId, pathList, tag, api.GenerationCommandKind_GENERATION_COMMAND_KIND_ADD_PATH_STREAM)
+			return err
+		}
+		return s.addPathListChecked(vrfId, pathList, fromAPI)
 	}, true)
 	return err
 }
@@ -2971,6 +3003,30 @@ func (s *BgpServer) addPath(ctx context.Context, req apiutil.AddPathRequest) ([]
 		isVRF = true
 	}
 
+	if req.Generation != nil {
+		var resps []apiutil.AddPathResponse
+		err := s.mgmtOperationWithContext(ctx, func() error {
+			paths := make([]*table.Path, len(req.Paths))
+			for i, p := range req.Paths {
+				if p == nil {
+					return genErr(codes.InvalidArgument, ErrGenerationInvalid, "path is nil")
+				}
+				path, err := apiutil2Path(p, isVRF)
+				if err != nil {
+					return genErr(codes.InvalidArgument, ErrGenerationInvalid, "%v", err)
+				}
+				paths[i] = path
+			}
+			var err error
+			resps, err = s.addTaggedPaths(req.VRFID, paths, req.Generation, api.GenerationCommandKind_GENERATION_COMMAND_KIND_ADD_PATH)
+			return err
+		}, true)
+		if err != nil {
+			return []apiutil.AddPathResponse{}, err
+		}
+		return resps, nil
+	}
+
 	resps := make([]apiutil.AddPathResponse, len(req.Paths))
 	var lastErr error
 	err := s.mgmtOperationWithContext(ctx, func() error {
@@ -2987,7 +3043,7 @@ func (s *BgpServer) addPath(ctx context.Context, req apiutil.AddPathRequest) ([]
 				continue
 			}
 
-			installed, err := s.installPathList(req.VRFID, []*table.Path{path}, true)
+			installed, err := s.installPathList(req.VRFID, []*table.Path{path}, true, true)
 			if err != nil {
 				lastErr = err
 				resps[i].Error = err
@@ -3025,20 +3081,47 @@ func (s *BgpServer) DeletePath(req apiutil.DeletePathRequest) error {
 // deletePath is DeletePath bound to the context of the caller, with the same
 // rule as addPath.
 func (s *BgpServer) deletePath(ctx context.Context, req apiutil.DeletePathRequest) error {
+	_, _, err := s.deletePathOutcome(ctx, req)
+	return err
+}
+
+// deletePathOutcome is deletePath that also returns the outcome of a
+// tagged delete and whether it was a replay.
+func (s *BgpServer) deletePathOutcome(ctx context.Context, req apiutil.DeletePathRequest) (api.GenerationDeleteOutcome, bool, error) {
 	isVRF := false
 	if req.VRFID != "" {
 		if _, ok := s.globalRib.GetVrf(req.VRFID); !ok {
-			return fmt.Errorf("vrf %s not found", req.VRFID)
+			return api.GenerationDeleteOutcome_GENERATION_DELETE_OUTCOME_UNSPECIFIED, false, fmt.Errorf("vrf %s not found", req.VRFID)
 		}
 		isVRF = true
 	}
-	return s.mgmtOperationWithContext(ctx, func() error {
+	var outcome api.GenerationDeleteOutcome
+	var replayed bool
+	err := s.mgmtOperationWithContext(ctx, func() error {
+		if req.Generation != nil {
+			var err error
+			outcome, replayed, err = s.deleteTaggedPath(req)
+			return err
+		}
 		deletePathList := make([]*table.Path, 0)
 		// delete by uuid
 		if len(req.UUIDs) > 0 {
-			// Each UUID names one path of the global table, read through
-			// the index: one destination, not a walk of the table.
-			if !s.deleteByUUIDs(req.UUIDs) {
+			// The UUIDs that tagged AddPaths gave are found by their own
+			// index; the others by the index of untagged UUIDs. Each names
+			// one path of the global table: one destination, not a walk of
+			// the table.
+			found, rest, err := s.deleteUntaggedUUIDs(req.UUIDs)
+			if err != nil {
+				return err
+			}
+			for _, id := range rest {
+				if e, ok := s.pathIndex.byUUID[id]; ok {
+					if err := s.checkUntaggedFamilies(e.key.family); err != nil {
+						return err
+					}
+				}
+			}
+			if !s.deleteByUUIDs(rest) && !found {
 				return fmt.Errorf("can't find a specified path(s) with the given UUID(s)")
 			}
 			return nil
@@ -3048,12 +3131,18 @@ func (s *BgpServer) deletePath(ctx context.Context, req apiutil.DeletePathReques
 			if req.DeleteFamily != nil {
 				families = []bgp.Family{*req.DeleteFamily}
 			}
+			if err := s.checkUntaggedFamilies(families...); err != nil {
+				return err
+			}
 			for _, path := range s.globalRib.GetPathList(table.GLOBAL_RIB_NAME, 0, families) {
 				if path.IsLocal() {
 					deletePathList = append(deletePathList, path.Clone(true))
 				}
 			}
 			s.pathIndex.endFamilies(families)
+			s.propagateUpdate(nil, deletePathList)
+			s.generations.endFamilies(families, time.Now().UTC())
+			return nil
 		} else {
 			// Delete specified path(s)
 			if len(req.Paths) == 0 {
@@ -3067,14 +3156,17 @@ func (s *BgpServer) deletePath(ctx context.Context, req apiutil.DeletePathReques
 				if err := s.fixupApiPath(req.VRFID, []*table.Path{path}); err != nil {
 					return err
 				}
+				if err := s.checkUntaggedFamilies(path.GetFamily()); err != nil {
+					return err
+				}
 				deletePathList = append(deletePathList, path)
 			}
 			s.propagateLocal(deletePathList, false)
+			s.noteUntaggedWrites(deletePathList, uuid.Nil)
 			return nil
 		}
-		s.propagateUpdate(nil, deletePathList)
-		return nil
 	}, true)
+	return outcome, replayed, err
 }
 
 func (s *BgpServer) updatePath(vrfId string, pathList []*table.Path) error {
@@ -3110,6 +3202,19 @@ func (s *BgpServer) StartBgp(ctx context.Context, r *api.StartBgpRequest) error 
 		return fmt.Errorf("nil request")
 	}
 	return s.mgmtOperation(func() error {
+		// The tombstones are restored before anything else, and every
+		// write waits for StartBgp, so no write can run without them.
+		opened, err := s.generations.open()
+		if err != nil {
+			return err
+		}
+		started := false
+		defer func() {
+			if opened && !started {
+				//nolint: errcheck // the start error is the one to report
+				s.generations.close()
+			}
+		}()
 		g := r.Global
 		routerAddr, err := netip.ParseAddr(g.RouterId)
 		if err != nil {
@@ -3151,6 +3256,7 @@ func (s *BgpServer) StartBgp(ctx context.Context, r *api.StartBgpRequest) error 
 				return err
 			}
 		}
+		started = true
 		return nil
 	}, false)
 }

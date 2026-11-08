@@ -220,8 +220,9 @@ func (s *BgpServer) propagateLocal(paths []*table.Path, capture bool) []*table.P
 
 // deleteByUUIDs withdraws the paths of the UUIDs and reports whether it
 // found any. A UUID deletes every local path in the slot of its path, as
-// several can share one with no_implicit_withdraw. A UUID whose path is
-// gone ends and deletes nothing.
+// several can share one with no_implicit_withdraw, except a path that a
+// tagged write owns: only the UUID of that write deletes it. A UUID whose
+// path is gone ends and deletes nothing.
 func (s *BgpServer) deleteByUUIDs(ids []uuid.UUID) bool {
 	found := false
 	for _, id := range ids {
@@ -235,9 +236,12 @@ func (s *BgpServer) deleteByUUIDs(ids []uuid.UUID) bool {
 			continue
 		}
 		found = true
-		withdrawals := make([]*table.Path, len(held))
-		for i, rp := range held {
-			withdrawals[i] = rp.Clone(true)
+		withdrawals := make([]*table.Path, 0, len(held))
+		for _, rp := range held {
+			if s.generations.owns(rp) {
+				continue
+			}
+			withdrawals = append(withdrawals, rp.Clone(true))
 		}
 		// The whole slot is withdrawn, so its entries are reconciled once,
 		// after the list, not after each withdrawal.

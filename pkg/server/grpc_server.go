@@ -602,9 +602,11 @@ func (s *server) AddPath(ctx context.Context, r *api.AddPathRequest) (*api.AddPa
 	if err != nil {
 		return &api.AddPathResponse{}, fmt.Errorf("invalid path: %w", err)
 	}
+	tag := apiutil.GenerationTagFromAPI(r.GenerationTag)
 	path, err := s.bgpServer.addPath(ctx, apiutil.AddPathRequest{
-		VRFID: r.VrfId,
-		Paths: []*apiutil.Path{p},
+		VRFID:      r.VrfId,
+		Paths:      []*apiutil.Path{p},
+		Generation: tag,
 	})
 	if err != nil {
 		return &api.AddPathResponse{}, err
@@ -612,10 +614,33 @@ func (s *server) AddPath(ctx context.Context, r *api.AddPathRequest) (*api.AddPa
 
 	id := path[0].UUID
 	uuidBytes, err = id.MarshalBinary()
-	return &api.AddPathResponse{Uuid: uuidBytes}, err
+	resp := &api.AddPathResponse{Uuid: uuidBytes}
+	if tag != nil {
+		resp.Replayed = path[0].Replayed
+		resp.Incarnation = s.bgpServer.generationIncarnation()
+	}
+	return resp, err
 }
 
 func (s *server) DeletePath(ctx context.Context, r *api.DeletePathRequest) (*api.DeletePathResponse, error) {
+	if r.GenerationTag != nil {
+		if len(r.Uuid) == 0 {
+			return nil, status.Error(codes.InvalidArgument, "a tagged delete names a uuid")
+		}
+		id, err := uuid.FromBytes(r.Uuid)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid uuid: %v", err)
+		}
+		outcome, replayed, err := s.bgpServer.deletePathOutcome(ctx, apiutil.DeletePathRequest{
+			VRFID:      r.VrfId,
+			UUIDs:      []uuid.UUID{id},
+			Generation: apiutil.GenerationTagFromAPI(r.GenerationTag),
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &api.DeletePathResponse{Outcome: outcome, Replayed: replayed}, nil
+	}
 	deletePath := func(ctx context.Context, r *api.DeletePathRequest) error {
 		var pathList []*apiutil.Path
 		if len(r.Uuid) == 0 {
@@ -680,12 +705,24 @@ func (s *server) AddPathStream(stream api.GoBgpService_AddPathStreamServer) erro
 				pathList = append(pathList, path)
 			}
 		}
-		err = s.bgpServer.addPathStream(stream.Context(), arg.VrfId, pathList)
+		err = s.bgpServer.addPathStreamTagged(stream.Context(), arg.VrfId, pathList, apiutil.GenerationTagFromAPI(arg.GenerationTag), true)
 		if err != nil {
 			return err
 		}
 	}
 	return stream.SendAndClose(&api.AddPathStreamResponse{})
+}
+
+func (s *server) FenceGeneration(ctx context.Context, r *api.FenceGenerationRequest) (*api.FenceGenerationResponse, error) {
+	return s.bgpServer.FenceGeneration(ctx, r)
+}
+
+func (s *server) GetGeneration(ctx context.Context, r *api.GetGenerationRequest) (*api.GetGenerationResponse, error) {
+	return s.bgpServer.GetGeneration(ctx, r)
+}
+
+func (s *server) LookupDestinations(ctx context.Context, r *api.LookupDestinationsRequest) (*api.LookupDestinationsResponse, error) {
+	return s.bgpServer.LookupDestinations(ctx, r)
 }
 
 func (s *server) AddBmp(ctx context.Context, r *api.AddBmpRequest) (*api.AddBmpResponse, error) {

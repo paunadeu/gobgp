@@ -46,6 +46,7 @@ import (
 	"github.com/osrg/gobgp/v4/internal/pkg/version"
 	"github.com/osrg/gobgp/v4/pkg/config"
 	"github.com/osrg/gobgp/v4/pkg/metrics"
+	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
 	"github.com/osrg/gobgp/v4/pkg/server"
 )
 
@@ -79,6 +80,12 @@ func main() {
 		SentryEnvironment string  `long:"sentry-environment" description:"Sentry environment" default:"development"`
 		SentrySampleRate  float64 `long:"sentry-sample-rate" description:"Sentry traces sample rate" default:"1.0"`
 		SentryDebug       bool    `long:"sentry-debug" description:"Sentry debug mode"`
+
+		GenerationFenceDir        string   `long:"generation-fence-dir" description:"directory of the generation fence tombstones; enables tagged writes and FenceGeneration"`
+		GenerationFenceRequireTag []string `long:"generation-fence-require-tag" description:"family that untagged writes may not reach, such as ipv4-unicast (repeatable)"`
+		GenerationFenceSpeakerID  string   `long:"generation-fence-speaker-id" description:"the only speaker a generation command may name"`
+		GenerationFenceCacheSize  int      `long:"generation-fence-cache-size" description:"tombstone lookups kept in memory" default:"65536"`
+		GenerationFenceRetention  int      `long:"generation-fence-retention" description:"generations without a current path kept in memory with their receipts" default:"65536"`
 	}
 	_, err := flags.Parse(&opts)
 	if err != nil {
@@ -228,11 +235,31 @@ func main() {
 
 	logger.Info("gobgpd started")
 	fsmTimingCollector := metrics.NewFSMTimingsCollector()
-	bgpServer := server.NewBgpServer(
+	serverOpts := []server.ServerOption{
 		server.GrpcListenAddress(opts.GrpcHosts),
 		server.GrpcOption(grpcOpts),
 		server.LoggerOption(logger, lvl),
-		server.TimingHookOption(fsmTimingCollector))
+		server.TimingHookOption(fsmTimingCollector),
+	}
+	if opts.GenerationFenceDir != "" || len(opts.GenerationFenceRequireTag) > 0 || opts.GenerationFenceSpeakerID != "" {
+		families := make([]bgp.Family, 0, len(opts.GenerationFenceRequireTag))
+		for _, name := range opts.GenerationFenceRequireTag {
+			f, err := bgp.GetFamily(name)
+			if err != nil {
+				logger.Error("invalid --generation-fence-require-tag", slog.String("Family", name), slog.String("Error", err.Error()))
+				os.Exit(1)
+			}
+			families = append(families, f)
+		}
+		serverOpts = append(serverOpts, server.GenerationFenceOption(server.GenerationFenceConfig{
+			Dir:                        opts.GenerationFenceDir,
+			RequireTagFamilies:         families,
+			SpeakerID:                  opts.GenerationFenceSpeakerID,
+			TombstoneCacheSize:         opts.GenerationFenceCacheSize,
+			SettledGenerationRetention: opts.GenerationFenceRetention,
+		}))
+	}
+	bgpServer := server.NewBgpServer(serverOpts...)
 	prometheus.MustRegister(metrics.NewBgpCollector(bgpServer))
 	prometheus.MustRegister(fsmTimingCollector)
 	go bgpServer.Serve()
