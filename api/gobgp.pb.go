@@ -3590,7 +3590,10 @@ type AddPathResponse struct {
 	// so nothing was applied and the UUID is the one given the first time.
 	Replayed bool `protobuf:"varint,1000,opt,name=replayed,proto3" json:"replayed,omitempty"`
 	// The speaker incarnation the UUID belongs to. See GenerationStatus.
-	Incarnation   []byte `protobuf:"bytes,1001,opt,name=incarnation,proto3" json:"incarnation,omitempty"`
+	Incarnation []byte `protobuf:"bytes,1001,opt,name=incarnation,proto3" json:"incarnation,omitempty"`
+	// The speaker ID the server is configured with; empty when none is set.
+	// Set on every AddPath answer, tagged or not.
+	SpeakerId     string `protobuf:"bytes,1002,opt,name=speaker_id,json=speakerId,proto3" json:"speaker_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3644,6 +3647,13 @@ func (x *AddPathResponse) GetIncarnation() []byte {
 		return x.Incarnation
 	}
 	return nil
+}
+
+func (x *AddPathResponse) GetSpeakerId() string {
+	if x != nil {
+		return x.SpeakerId
+	}
+	return ""
 }
 
 type DeletePathRequest struct {
@@ -14175,9 +14185,12 @@ type GenerationStatus struct {
 	// speaker, which changes when it starts. Local paths do not survive a
 	// restart either, so a generation unknown to a new incarnation owns
 	// nothing in its RIB. Tombstones are durable and survive it.
-	Incarnation []byte               `protobuf:"bytes,5,opt,name=incarnation,proto3" json:"incarnation,omitempty"`
-	Receipts    []*GenerationReceipt `protobuf:"bytes,6,rep,name=receipts,proto3" json:"receipts,omitempty"`
-	Paths       []*GenerationPath    `protobuf:"bytes,7,rep,name=paths,proto3" json:"paths,omitempty"`
+	Incarnation []byte `protobuf:"bytes,5,opt,name=incarnation,proto3" json:"incarnation,omitempty"`
+	// The speaker ID the server is configured with; empty when none is set.
+	// A client compares it with the speaker it meant to ask.
+	SpeakerId string               `protobuf:"bytes,1000,opt,name=speaker_id,json=speakerId,proto3" json:"speaker_id,omitempty"`
+	Receipts  []*GenerationReceipt `protobuf:"bytes,6,rep,name=receipts,proto3" json:"receipts,omitempty"`
+	Paths     []*GenerationPath    `protobuf:"bytes,7,rep,name=paths,proto3" json:"paths,omitempty"`
 	// Tagged commands refused because the generation was fenced.
 	RefusedAfterFence uint64 `protobuf:"varint,8,opt,name=refused_after_fence,json=refusedAfterFence,proto3" json:"refused_after_fence,omitempty"`
 	// Paths whose state is CURRENT.
@@ -14249,6 +14262,13 @@ func (x *GenerationStatus) GetIncarnation() []byte {
 		return x.Incarnation
 	}
 	return nil
+}
+
+func (x *GenerationStatus) GetSpeakerId() string {
+	if x != nil {
+		return x.SpeakerId
+	}
+	return ""
 }
 
 func (x *GenerationStatus) GetReceipts() []*GenerationReceipt {
@@ -14714,9 +14734,11 @@ func (x *DestinationLookup) GetPaths() []*OwnedPath {
 }
 
 type LookupDestinationsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Destinations  []*DestinationLookup   `protobuf:"bytes,1,rep,name=destinations,proto3" json:"destinations,omitempty"`
-	Incarnation   []byte                 `protobuf:"bytes,2,opt,name=incarnation,proto3" json:"incarnation,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Destinations []*DestinationLookup   `protobuf:"bytes,1,rep,name=destinations,proto3" json:"destinations,omitempty"`
+	Incarnation  []byte                 `protobuf:"bytes,2,opt,name=incarnation,proto3" json:"incarnation,omitempty"`
+	// The speaker ID the server is configured with; empty when none is set.
+	SpeakerId     string `protobuf:"bytes,1000,opt,name=speaker_id,json=speakerId,proto3" json:"speaker_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -14763,6 +14785,13 @@ func (x *LookupDestinationsResponse) GetIncarnation() []byte {
 		return x.Incarnation
 	}
 	return nil
+}
+
+func (x *LookupDestinationsResponse) GetSpeakerId() string {
+	if x != nil {
+		return x.SpeakerId
+	}
+	return ""
 }
 
 type WatchEventRequest_Peer struct {
@@ -15302,11 +15331,13 @@ const file_api_gobgp_proto_rawDesc = "" +
 	"table_type\x18\x01 \x01(\x0e2\x0e.api.TableTypeR\ttableType\x12\x15\n" +
 	"\x06vrf_id\x18\x02 \x01(\tR\x05vrfId\x12\x1d\n" +
 	"\x04path\x18\x03 \x01(\v2\t.api.PathR\x04path\x12:\n" +
-	"\x0egeneration_tag\x18\xe8\a \x01(\v2\x12.api.GenerationTagR\rgenerationTag\"e\n" +
+	"\x0egeneration_tag\x18\xe8\a \x01(\v2\x12.api.GenerationTagR\rgenerationTag\"\x85\x01\n" +
 	"\x0fAddPathResponse\x12\x12\n" +
 	"\x04uuid\x18\x01 \x01(\fR\x04uuid\x12\x1b\n" +
 	"\breplayed\x18\xe8\a \x01(\bR\breplayed\x12!\n" +
-	"\vincarnation\x18\xe9\a \x01(\fR\vincarnation\"\xed\x01\n" +
+	"\vincarnation\x18\xe9\a \x01(\fR\vincarnation\x12\x1e\n" +
+	"\n" +
+	"speaker_id\x18\xea\a \x01(\tR\tspeakerId\"\xed\x01\n" +
 	"\x11DeletePathRequest\x12-\n" +
 	"\n" +
 	"table_type\x18\x01 \x01(\x0e2\x0e.api.TableTypeR\ttableType\x12\x15\n" +
@@ -16218,7 +16249,7 @@ const file_api_gobgp_proto_rawDesc = "" +
 	" \x01(\bR\apresent\x12\x1d\n" +
 	"\x04path\x18\v \x01(\v2\t.api.PathR\x04path\x125\n" +
 	"\badded_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\aaddedAt\x125\n" +
-	"\bended_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\aendedAt\"\x85\x03\n" +
+	"\bended_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\aendedAt\"\xa5\x03\n" +
 	"\x10GenerationStatus\x12\x16\n" +
 	"\x06tenant\x18\x01 \x01(\tR\x06tenant\x12\x1e\n" +
 	"\n" +
@@ -16226,7 +16257,9 @@ const file_api_gobgp_proto_rawDesc = "" +
 	"generation\x12*\n" +
 	"\x05state\x18\x03 \x01(\x0e2\x14.api.GenerationStateR\x05state\x127\n" +
 	"\tfenced_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\bfencedAt\x12 \n" +
-	"\vincarnation\x18\x05 \x01(\fR\vincarnation\x122\n" +
+	"\vincarnation\x18\x05 \x01(\fR\vincarnation\x12\x1e\n" +
+	"\n" +
+	"speaker_id\x18\xe8\a \x01(\tR\tspeakerId\x122\n" +
 	"\breceipts\x18\x06 \x03(\v2\x16.api.GenerationReceiptR\breceipts\x12)\n" +
 	"\x05paths\x18\a \x03(\v2\x13.api.GenerationPathR\x05paths\x12.\n" +
 	"\x13refused_after_fence\x18\b \x01(\x04R\x11refusedAfterFence\x12#\n" +
@@ -16260,10 +16293,12 @@ const file_api_gobgp_proto_rawDesc = "" +
 	"\x05owner\x18\x03 \x01(\v2\x12.api.GenerationTagR\x05owner\"`\n" +
 	"\x11DestinationLookup\x12%\n" +
 	"\x03key\x18\x01 \x01(\v2\x13.api.DestinationKeyR\x03key\x12$\n" +
-	"\x05paths\x18\x02 \x03(\v2\x0e.api.OwnedPathR\x05paths\"z\n" +
+	"\x05paths\x18\x02 \x03(\v2\x0e.api.OwnedPathR\x05paths\"\x9a\x01\n" +
 	"\x1aLookupDestinationsResponse\x12:\n" +
 	"\fdestinations\x18\x01 \x03(\v2\x16.api.DestinationLookupR\fdestinations\x12 \n" +
-	"\vincarnation\x18\x02 \x01(\fR\vincarnation*\x97\x01\n" +
+	"\vincarnation\x18\x02 \x01(\fR\vincarnation\x12\x1e\n" +
+	"\n" +
+	"speaker_id\x18\xe8\a \x01(\tR\tspeakerId*\x97\x01\n" +
 	"\tTableType\x12\x1a\n" +
 	"\x16TABLE_TYPE_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11TABLE_TYPE_GLOBAL\x10\x01\x12\x14\n" +

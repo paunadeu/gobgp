@@ -78,6 +78,12 @@ false and the first fence time is kept when the generation was fenced already.
 Both read only the destinations they name, and both run in the management
 loop, so they see every mutation acknowledged before them.
 
+Every answer of `GetGeneration`, `FenceGeneration` (in its status),
+`LookupDestinations` and `AddPath` carries `speaker_id`, the value of
+`--generation-fence-speaker-id`, empty when it is not set. A client compares
+it with the speaker it meant to ask, so it learns which speaker answered
+instead of trusting its own configuration.
+
 Receipts and UUIDs live in memory and belong to one incarnation of the
 speaker, a random ID taken at `StartBgp` and returned by these calls and by a
 tagged `AddPath`. Local paths do not survive a restart either, so a
