@@ -327,12 +327,13 @@ to some owner, so closing owners covers all of them. Small, after C.
 
 ## Mapping a generation-based client onto the primitives
 
-A client that steers routes in generations, and today uses the
-`octo/generation-fence` fork API, maps as follows.
+A client that steers routes in generations, and today uses a fork of GoBGP
+with a generation fence (generation-tagged writes, fences, receipts), maps as
+follows.
 
 | Fork | Generic |
 | --- | --- |
-| `GenerationTag{tenant/namespace, generation}` | `owner` = `"<namespace>/<generation>"`, built by the client |
+| `GenerationTag{namespace, generation}` | `owner` = `"<namespace>/<generation>"`, built by the client |
 | `GenerationTag.command_id`, receipts, `replayed` | `request_id` (B) |
 | `FenceGeneration`, `FenceGenerations` | `CloseOwners` (D) |
 | tombstones on disk (bbolt) | `--owner-close-dir` (append-only file) |
