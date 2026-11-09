@@ -824,6 +824,11 @@ const (
 	// Another write had taken the route key; nothing changed, and the path
 	// there now is left alone.
 	GenerationDeleteOutcome_GENERATION_DELETE_OUTCOME_REPLACED GenerationDeleteOutcome = 3
+	// DeleteGenerations only: the index named the path current but the RIB
+	// held no local path at its route key; it is marked deleted.
+	GenerationDeleteOutcome_GENERATION_DELETE_OUTCOME_ALREADY_ABSENT GenerationDeleteOutcome = 4
+	// DeleteGenerations only: the generation is not fenced; nothing changed.
+	GenerationDeleteOutcome_GENERATION_DELETE_OUTCOME_REFUSED GenerationDeleteOutcome = 5
 )
 
 // Enum value maps for GenerationDeleteOutcome.
@@ -833,12 +838,16 @@ var (
 		1: "GENERATION_DELETE_OUTCOME_DELETED",
 		2: "GENERATION_DELETE_OUTCOME_ALREADY_DELETED",
 		3: "GENERATION_DELETE_OUTCOME_REPLACED",
+		4: "GENERATION_DELETE_OUTCOME_ALREADY_ABSENT",
+		5: "GENERATION_DELETE_OUTCOME_REFUSED",
 	}
 	GenerationDeleteOutcome_value = map[string]int32{
 		"GENERATION_DELETE_OUTCOME_UNSPECIFIED":     0,
 		"GENERATION_DELETE_OUTCOME_DELETED":         1,
 		"GENERATION_DELETE_OUTCOME_ALREADY_DELETED": 2,
 		"GENERATION_DELETE_OUTCOME_REPLACED":        3,
+		"GENERATION_DELETE_OUTCOME_ALREADY_ABSENT":  4,
+		"GENERATION_DELETE_OUTCOME_REFUSED":         5,
 	}
 )
 
@@ -14623,6 +14632,350 @@ func (x *GetGenerationResponse) GetStatus() *GenerationStatus {
 	return nil
 }
 
+// DeleteGenerations deletes every current path of the listed generations of
+// one tenant. Only fenced generations qualify; a generation that is not
+// fenced is reported refused and the others still proceed. A path is
+// deleted only while one of the listed generations owns it: a path that
+// another write took over is kept. The work runs in the management loop in
+// steps of a bounded number of paths; the statuses are taken in the last
+// step, after every delete.
+type DeleteGenerationsRequest struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Tenant string                 `protobuf:"bytes,1000,opt,name=tenant,proto3" json:"tenant,omitempty"`
+	// 1 to 1024 entries, none 0. A generation listed twice is handled and
+	// reported once.
+	Generations   []uint64 `protobuf:"varint,1001,rep,packed,name=generations,proto3" json:"generations,omitempty"`
+	Speaker       string   `protobuf:"bytes,1002,opt,name=speaker,proto3" json:"speaker,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteGenerationsRequest) Reset() {
+	*x = DeleteGenerationsRequest{}
+	mi := &file_api_gobgp_proto_msgTypes[216]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteGenerationsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteGenerationsRequest) ProtoMessage() {}
+
+func (x *DeleteGenerationsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_gobgp_proto_msgTypes[216]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteGenerationsRequest.ProtoReflect.Descriptor instead.
+func (*DeleteGenerationsRequest) Descriptor() ([]byte, []int) {
+	return file_api_gobgp_proto_rawDescGZIP(), []int{216}
+}
+
+func (x *DeleteGenerationsRequest) GetTenant() string {
+	if x != nil {
+		return x.Tenant
+	}
+	return ""
+}
+
+func (x *DeleteGenerationsRequest) GetGenerations() []uint64 {
+	if x != nil {
+		return x.Generations
+	}
+	return nil
+}
+
+func (x *DeleteGenerationsRequest) GetSpeaker() string {
+	if x != nil {
+		return x.Speaker
+	}
+	return ""
+}
+
+type GenerationPathOutcome struct {
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	Uuid          []byte                  `protobuf:"bytes,1000,opt,name=uuid,proto3" json:"uuid,omitempty"`
+	Outcome       GenerationDeleteOutcome `protobuf:"varint,1001,opt,name=outcome,proto3,enum=api.GenerationDeleteOutcome" json:"outcome,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GenerationPathOutcome) Reset() {
+	*x = GenerationPathOutcome{}
+	mi := &file_api_gobgp_proto_msgTypes[217]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GenerationPathOutcome) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GenerationPathOutcome) ProtoMessage() {}
+
+func (x *GenerationPathOutcome) ProtoReflect() protoreflect.Message {
+	mi := &file_api_gobgp_proto_msgTypes[217]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GenerationPathOutcome.ProtoReflect.Descriptor instead.
+func (*GenerationPathOutcome) Descriptor() ([]byte, []int) {
+	return file_api_gobgp_proto_rawDescGZIP(), []int{217}
+}
+
+func (x *GenerationPathOutcome) GetUuid() []byte {
+	if x != nil {
+		return x.Uuid
+	}
+	return nil
+}
+
+func (x *GenerationPathOutcome) GetOutcome() GenerationDeleteOutcome {
+	if x != nil {
+		return x.Outcome
+	}
+	return GenerationDeleteOutcome_GENERATION_DELETE_OUTCOME_UNSPECIFIED
+}
+
+type GenerationDeleteResult struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Generation uint64                 `protobuf:"varint,1000,opt,name=generation,proto3" json:"generation,omitempty"`
+	// The generation is not fenced; its paths are untouched.
+	Refused bool `protobuf:"varint,1001,opt,name=refused,proto3" json:"refused,omitempty"`
+	// One per UUID the generation was given in this incarnation.
+	Outcomes      []*GenerationPathOutcome `protobuf:"bytes,1002,rep,name=outcomes,proto3" json:"outcomes,omitempty"`
+	Status        *GenerationStatus        `protobuf:"bytes,1003,opt,name=status,proto3" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GenerationDeleteResult) Reset() {
+	*x = GenerationDeleteResult{}
+	mi := &file_api_gobgp_proto_msgTypes[218]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GenerationDeleteResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GenerationDeleteResult) ProtoMessage() {}
+
+func (x *GenerationDeleteResult) ProtoReflect() protoreflect.Message {
+	mi := &file_api_gobgp_proto_msgTypes[218]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GenerationDeleteResult.ProtoReflect.Descriptor instead.
+func (*GenerationDeleteResult) Descriptor() ([]byte, []int) {
+	return file_api_gobgp_proto_rawDescGZIP(), []int{218}
+}
+
+func (x *GenerationDeleteResult) GetGeneration() uint64 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
+}
+
+func (x *GenerationDeleteResult) GetRefused() bool {
+	if x != nil {
+		return x.Refused
+	}
+	return false
+}
+
+func (x *GenerationDeleteResult) GetOutcomes() []*GenerationPathOutcome {
+	if x != nil {
+		return x.Outcomes
+	}
+	return nil
+}
+
+func (x *GenerationDeleteResult) GetStatus() *GenerationStatus {
+	if x != nil {
+		return x.Status
+	}
+	return nil
+}
+
+type DeleteGenerationsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// One per distinct generation, in the order of first mention.
+	Results []*GenerationDeleteResult `protobuf:"bytes,1000,rep,name=results,proto3" json:"results,omitempty"`
+	// Management-loop steps the call took.
+	Steps         uint32 `protobuf:"varint,1001,opt,name=steps,proto3" json:"steps,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteGenerationsResponse) Reset() {
+	*x = DeleteGenerationsResponse{}
+	mi := &file_api_gobgp_proto_msgTypes[219]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteGenerationsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteGenerationsResponse) ProtoMessage() {}
+
+func (x *DeleteGenerationsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_gobgp_proto_msgTypes[219]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteGenerationsResponse.ProtoReflect.Descriptor instead.
+func (*DeleteGenerationsResponse) Descriptor() ([]byte, []int) {
+	return file_api_gobgp_proto_rawDescGZIP(), []int{219}
+}
+
+func (x *DeleteGenerationsResponse) GetResults() []*GenerationDeleteResult {
+	if x != nil {
+		return x.Results
+	}
+	return nil
+}
+
+func (x *DeleteGenerationsResponse) GetSteps() uint32 {
+	if x != nil {
+		return x.Steps
+	}
+	return 0
+}
+
+// GetGenerations is GetGeneration for up to 1024 generations of a tenant,
+// read in one management-loop step.
+type GetGenerationsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Tenant        string                 `protobuf:"bytes,1000,opt,name=tenant,proto3" json:"tenant,omitempty"`
+	Generations   []uint64               `protobuf:"varint,1001,rep,packed,name=generations,proto3" json:"generations,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetGenerationsRequest) Reset() {
+	*x = GetGenerationsRequest{}
+	mi := &file_api_gobgp_proto_msgTypes[220]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetGenerationsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetGenerationsRequest) ProtoMessage() {}
+
+func (x *GetGenerationsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_gobgp_proto_msgTypes[220]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetGenerationsRequest.ProtoReflect.Descriptor instead.
+func (*GetGenerationsRequest) Descriptor() ([]byte, []int) {
+	return file_api_gobgp_proto_rawDescGZIP(), []int{220}
+}
+
+func (x *GetGenerationsRequest) GetTenant() string {
+	if x != nil {
+		return x.Tenant
+	}
+	return ""
+}
+
+func (x *GetGenerationsRequest) GetGenerations() []uint64 {
+	if x != nil {
+		return x.Generations
+	}
+	return nil
+}
+
+type GetGenerationsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// One per distinct generation, in the order of first mention.
+	Statuses      []*GenerationStatus `protobuf:"bytes,1000,rep,name=statuses,proto3" json:"statuses,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetGenerationsResponse) Reset() {
+	*x = GetGenerationsResponse{}
+	mi := &file_api_gobgp_proto_msgTypes[221]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetGenerationsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetGenerationsResponse) ProtoMessage() {}
+
+func (x *GetGenerationsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_gobgp_proto_msgTypes[221]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetGenerationsResponse.ProtoReflect.Descriptor instead.
+func (*GetGenerationsResponse) Descriptor() ([]byte, []int) {
+	return file_api_gobgp_proto_rawDescGZIP(), []int{221}
+}
+
+func (x *GetGenerationsResponse) GetStatuses() []*GenerationStatus {
+	if x != nil {
+		return x.Statuses
+	}
+	return nil
+}
+
 type DestinationKey struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Family        *Family                `protobuf:"bytes,1,opt,name=family,proto3" json:"family,omitempty"`
@@ -14633,7 +14986,7 @@ type DestinationKey struct {
 
 func (x *DestinationKey) Reset() {
 	*x = DestinationKey{}
-	mi := &file_api_gobgp_proto_msgTypes[216]
+	mi := &file_api_gobgp_proto_msgTypes[222]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14645,7 +14998,7 @@ func (x *DestinationKey) String() string {
 func (*DestinationKey) ProtoMessage() {}
 
 func (x *DestinationKey) ProtoReflect() protoreflect.Message {
-	mi := &file_api_gobgp_proto_msgTypes[216]
+	mi := &file_api_gobgp_proto_msgTypes[222]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14658,7 +15011,7 @@ func (x *DestinationKey) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DestinationKey.ProtoReflect.Descriptor instead.
 func (*DestinationKey) Descriptor() ([]byte, []int) {
-	return file_api_gobgp_proto_rawDescGZIP(), []int{216}
+	return file_api_gobgp_proto_rawDescGZIP(), []int{222}
 }
 
 func (x *DestinationKey) GetFamily() *Family {
@@ -14687,7 +15040,7 @@ type LookupDestinationsRequest struct {
 
 func (x *LookupDestinationsRequest) Reset() {
 	*x = LookupDestinationsRequest{}
-	mi := &file_api_gobgp_proto_msgTypes[217]
+	mi := &file_api_gobgp_proto_msgTypes[223]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14699,7 +15052,7 @@ func (x *LookupDestinationsRequest) String() string {
 func (*LookupDestinationsRequest) ProtoMessage() {}
 
 func (x *LookupDestinationsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_gobgp_proto_msgTypes[217]
+	mi := &file_api_gobgp_proto_msgTypes[223]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14712,7 +15065,7 @@ func (x *LookupDestinationsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LookupDestinationsRequest.ProtoReflect.Descriptor instead.
 func (*LookupDestinationsRequest) Descriptor() ([]byte, []int) {
-	return file_api_gobgp_proto_rawDescGZIP(), []int{217}
+	return file_api_gobgp_proto_rawDescGZIP(), []int{223}
 }
 
 func (x *LookupDestinationsRequest) GetTableType() TableType {
@@ -14741,7 +15094,7 @@ type OwnedPath struct {
 
 func (x *OwnedPath) Reset() {
 	*x = OwnedPath{}
-	mi := &file_api_gobgp_proto_msgTypes[218]
+	mi := &file_api_gobgp_proto_msgTypes[224]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14753,7 +15106,7 @@ func (x *OwnedPath) String() string {
 func (*OwnedPath) ProtoMessage() {}
 
 func (x *OwnedPath) ProtoReflect() protoreflect.Message {
-	mi := &file_api_gobgp_proto_msgTypes[218]
+	mi := &file_api_gobgp_proto_msgTypes[224]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14766,7 +15119,7 @@ func (x *OwnedPath) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OwnedPath.ProtoReflect.Descriptor instead.
 func (*OwnedPath) Descriptor() ([]byte, []int) {
-	return file_api_gobgp_proto_rawDescGZIP(), []int{218}
+	return file_api_gobgp_proto_rawDescGZIP(), []int{224}
 }
 
 func (x *OwnedPath) GetPath() *Path {
@@ -14801,7 +15154,7 @@ type DestinationLookup struct {
 
 func (x *DestinationLookup) Reset() {
 	*x = DestinationLookup{}
-	mi := &file_api_gobgp_proto_msgTypes[219]
+	mi := &file_api_gobgp_proto_msgTypes[225]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14813,7 +15166,7 @@ func (x *DestinationLookup) String() string {
 func (*DestinationLookup) ProtoMessage() {}
 
 func (x *DestinationLookup) ProtoReflect() protoreflect.Message {
-	mi := &file_api_gobgp_proto_msgTypes[219]
+	mi := &file_api_gobgp_proto_msgTypes[225]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14826,7 +15179,7 @@ func (x *DestinationLookup) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DestinationLookup.ProtoReflect.Descriptor instead.
 func (*DestinationLookup) Descriptor() ([]byte, []int) {
-	return file_api_gobgp_proto_rawDescGZIP(), []int{219}
+	return file_api_gobgp_proto_rawDescGZIP(), []int{225}
 }
 
 func (x *DestinationLookup) GetKey() *DestinationKey {
@@ -14855,7 +15208,7 @@ type LookupDestinationsResponse struct {
 
 func (x *LookupDestinationsResponse) Reset() {
 	*x = LookupDestinationsResponse{}
-	mi := &file_api_gobgp_proto_msgTypes[220]
+	mi := &file_api_gobgp_proto_msgTypes[226]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14867,7 +15220,7 @@ func (x *LookupDestinationsResponse) String() string {
 func (*LookupDestinationsResponse) ProtoMessage() {}
 
 func (x *LookupDestinationsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_gobgp_proto_msgTypes[220]
+	mi := &file_api_gobgp_proto_msgTypes[226]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14880,7 +15233,7 @@ func (x *LookupDestinationsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LookupDestinationsResponse.ProtoReflect.Descriptor instead.
 func (*LookupDestinationsResponse) Descriptor() ([]byte, []int) {
-	return file_api_gobgp_proto_rawDescGZIP(), []int{220}
+	return file_api_gobgp_proto_rawDescGZIP(), []int{226}
 }
 
 func (x *LookupDestinationsResponse) GetDestinations() []*DestinationLookup {
@@ -14912,7 +15265,7 @@ type WatchEventRequest_Peer struct {
 
 func (x *WatchEventRequest_Peer) Reset() {
 	*x = WatchEventRequest_Peer{}
-	mi := &file_api_gobgp_proto_msgTypes[221]
+	mi := &file_api_gobgp_proto_msgTypes[227]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14924,7 +15277,7 @@ func (x *WatchEventRequest_Peer) String() string {
 func (*WatchEventRequest_Peer) ProtoMessage() {}
 
 func (x *WatchEventRequest_Peer) ProtoReflect() protoreflect.Message {
-	mi := &file_api_gobgp_proto_msgTypes[221]
+	mi := &file_api_gobgp_proto_msgTypes[227]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14949,7 +15302,7 @@ type WatchEventRequest_Table struct {
 
 func (x *WatchEventRequest_Table) Reset() {
 	*x = WatchEventRequest_Table{}
-	mi := &file_api_gobgp_proto_msgTypes[222]
+	mi := &file_api_gobgp_proto_msgTypes[228]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -14961,7 +15314,7 @@ func (x *WatchEventRequest_Table) String() string {
 func (*WatchEventRequest_Table) ProtoMessage() {}
 
 func (x *WatchEventRequest_Table) ProtoReflect() protoreflect.Message {
-	mi := &file_api_gobgp_proto_msgTypes[222]
+	mi := &file_api_gobgp_proto_msgTypes[228]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14996,7 +15349,7 @@ type WatchEventRequest_Table_Filter struct {
 
 func (x *WatchEventRequest_Table_Filter) Reset() {
 	*x = WatchEventRequest_Table_Filter{}
-	mi := &file_api_gobgp_proto_msgTypes[223]
+	mi := &file_api_gobgp_proto_msgTypes[229]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15008,7 +15361,7 @@ func (x *WatchEventRequest_Table_Filter) String() string {
 func (*WatchEventRequest_Table_Filter) ProtoMessage() {}
 
 func (x *WatchEventRequest_Table_Filter) ProtoReflect() protoreflect.Message {
-	mi := &file_api_gobgp_proto_msgTypes[223]
+	mi := &file_api_gobgp_proto_msgTypes[229]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15062,7 +15415,7 @@ type WatchEventResponse_PeerEvent struct {
 
 func (x *WatchEventResponse_PeerEvent) Reset() {
 	*x = WatchEventResponse_PeerEvent{}
-	mi := &file_api_gobgp_proto_msgTypes[224]
+	mi := &file_api_gobgp_proto_msgTypes[230]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15074,7 +15427,7 @@ func (x *WatchEventResponse_PeerEvent) String() string {
 func (*WatchEventResponse_PeerEvent) ProtoMessage() {}
 
 func (x *WatchEventResponse_PeerEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_api_gobgp_proto_msgTypes[224]
+	mi := &file_api_gobgp_proto_msgTypes[230]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15116,7 +15469,7 @@ type WatchEventResponse_TableEvent struct {
 
 func (x *WatchEventResponse_TableEvent) Reset() {
 	*x = WatchEventResponse_TableEvent{}
-	mi := &file_api_gobgp_proto_msgTypes[225]
+	mi := &file_api_gobgp_proto_msgTypes[231]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15128,7 +15481,7 @@ func (x *WatchEventResponse_TableEvent) String() string {
 func (*WatchEventResponse_TableEvent) ProtoMessage() {}
 
 func (x *WatchEventResponse_TableEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_api_gobgp_proto_msgTypes[225]
+	mi := &file_api_gobgp_proto_msgTypes[231]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15168,7 +15521,7 @@ type ListBmpResponse_BmpStation struct {
 
 func (x *ListBmpResponse_BmpStation) Reset() {
 	*x = ListBmpResponse_BmpStation{}
-	mi := &file_api_gobgp_proto_msgTypes[226]
+	mi := &file_api_gobgp_proto_msgTypes[232]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15180,7 +15533,7 @@ func (x *ListBmpResponse_BmpStation) String() string {
 func (*ListBmpResponse_BmpStation) ProtoMessage() {}
 
 func (x *ListBmpResponse_BmpStation) ProtoReflect() protoreflect.Message {
-	mi := &file_api_gobgp_proto_msgTypes[226]
+	mi := &file_api_gobgp_proto_msgTypes[232]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15220,7 +15573,7 @@ type ListBmpResponse_BmpStation_Conf struct {
 
 func (x *ListBmpResponse_BmpStation_Conf) Reset() {
 	*x = ListBmpResponse_BmpStation_Conf{}
-	mi := &file_api_gobgp_proto_msgTypes[227]
+	mi := &file_api_gobgp_proto_msgTypes[233]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15232,7 +15585,7 @@ func (x *ListBmpResponse_BmpStation_Conf) String() string {
 func (*ListBmpResponse_BmpStation_Conf) ProtoMessage() {}
 
 func (x *ListBmpResponse_BmpStation_Conf) ProtoReflect() protoreflect.Message {
-	mi := &file_api_gobgp_proto_msgTypes[227]
+	mi := &file_api_gobgp_proto_msgTypes[233]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -15272,7 +15625,7 @@ type ListBmpResponse_BmpStation_State struct {
 
 func (x *ListBmpResponse_BmpStation_State) Reset() {
 	*x = ListBmpResponse_BmpStation_State{}
-	mi := &file_api_gobgp_proto_msgTypes[228]
+	mi := &file_api_gobgp_proto_msgTypes[234]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -15284,7 +15637,7 @@ func (x *ListBmpResponse_BmpStation_State) String() string {
 func (*ListBmpResponse_BmpStation_State) ProtoMessage() {}
 
 func (x *ListBmpResponse_BmpStation_State) ProtoReflect() protoreflect.Message {
-	mi := &file_api_gobgp_proto_msgTypes[228]
+	mi := &file_api_gobgp_proto_msgTypes[234]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16395,7 +16748,29 @@ const file_api_gobgp_proto_rawDesc = "" +
 	"generation\x18\x02 \x01(\x04R\n" +
 	"generation\"F\n" +
 	"\x15GetGenerationResponse\x12-\n" +
-	"\x06status\x18\x01 \x01(\v2\x15.api.GenerationStatusR\x06status\"T\n" +
+	"\x06status\x18\x01 \x01(\v2\x15.api.GenerationStatusR\x06status\"q\n" +
+	"\x18DeleteGenerationsRequest\x12\x17\n" +
+	"\x06tenant\x18\xe8\a \x01(\tR\x06tenant\x12!\n" +
+	"\vgenerations\x18\xe9\a \x03(\x04R\vgenerations\x12\x19\n" +
+	"\aspeaker\x18\xea\a \x01(\tR\aspeaker\"e\n" +
+	"\x15GenerationPathOutcome\x12\x13\n" +
+	"\x04uuid\x18\xe8\a \x01(\fR\x04uuid\x127\n" +
+	"\aoutcome\x18\xe9\a \x01(\x0e2\x1c.api.GenerationDeleteOutcomeR\aoutcome\"\xbd\x01\n" +
+	"\x16GenerationDeleteResult\x12\x1f\n" +
+	"\n" +
+	"generation\x18\xe8\a \x01(\x04R\n" +
+	"generation\x12\x19\n" +
+	"\arefused\x18\xe9\a \x01(\bR\arefused\x127\n" +
+	"\boutcomes\x18\xea\a \x03(\v2\x1a.api.GenerationPathOutcomeR\boutcomes\x12.\n" +
+	"\x06status\x18\xeb\a \x01(\v2\x15.api.GenerationStatusR\x06status\"j\n" +
+	"\x19DeleteGenerationsResponse\x126\n" +
+	"\aresults\x18\xe8\a \x03(\v2\x1b.api.GenerationDeleteResultR\aresults\x12\x15\n" +
+	"\x05steps\x18\xe9\a \x01(\rR\x05steps\"S\n" +
+	"\x15GetGenerationsRequest\x12\x17\n" +
+	"\x06tenant\x18\xe8\a \x01(\tR\x06tenant\x12!\n" +
+	"\vgenerations\x18\xe9\a \x03(\x04R\vgenerations\"L\n" +
+	"\x16GetGenerationsResponse\x122\n" +
+	"\bstatuses\x18\xe8\a \x03(\v2\x15.api.GenerationStatusR\bstatuses\"T\n" +
 	"\x0eDestinationKey\x12#\n" +
 	"\x06family\x18\x01 \x01(\v2\v.api.FamilyR\x06family\x12\x1d\n" +
 	"\x04nlri\x18\x02 \x01(\v2\t.api.NLRIR\x04nlri\"s\n" +
@@ -16497,17 +16872,19 @@ const file_api_gobgp_proto_rawDesc = "" +
 	"!GENERATION_PATH_STATE_UNSPECIFIED\x10\x00\x12!\n" +
 	"\x1dGENERATION_PATH_STATE_CURRENT\x10\x01\x12\"\n" +
 	"\x1eGENERATION_PATH_STATE_REPLACED\x10\x02\x12!\n" +
-	"\x1dGENERATION_PATH_STATE_DELETED\x10\x03*\xc2\x01\n" +
+	"\x1dGENERATION_PATH_STATE_DELETED\x10\x03*\x97\x02\n" +
 	"\x17GenerationDeleteOutcome\x12)\n" +
 	"%GENERATION_DELETE_OUTCOME_UNSPECIFIED\x10\x00\x12%\n" +
 	"!GENERATION_DELETE_OUTCOME_DELETED\x10\x01\x12-\n" +
 	")GENERATION_DELETE_OUTCOME_ALREADY_DELETED\x10\x02\x12&\n" +
-	"\"GENERATION_DELETE_OUTCOME_REPLACED\x10\x03*\xbc\x01\n" +
+	"\"GENERATION_DELETE_OUTCOME_REPLACED\x10\x03\x12,\n" +
+	"(GENERATION_DELETE_OUTCOME_ALREADY_ABSENT\x10\x04\x12%\n" +
+	"!GENERATION_DELETE_OUTCOME_REFUSED\x10\x05*\xbc\x01\n" +
 	"\x15GenerationCommandKind\x12'\n" +
 	"#GENERATION_COMMAND_KIND_UNSPECIFIED\x10\x00\x12$\n" +
 	" GENERATION_COMMAND_KIND_ADD_PATH\x10\x01\x12+\n" +
 	"'GENERATION_COMMAND_KIND_ADD_PATH_STREAM\x10\x02\x12'\n" +
-	"#GENERATION_COMMAND_KIND_DELETE_PATH\x10\x032\xad\"\n" +
+	"#GENERATION_COMMAND_KIND_DELETE_PATH\x10\x032\xcc#\n" +
 	"\fGoBgpService\x127\n" +
 	"\bStartBgp\x12\x14.api.StartBgpRequest\x1a\x15.api.StartBgpResponse\x124\n" +
 	"\aStopBgp\x12\x13.api.StopBgpRequest\x1a\x14.api.StopBgpResponse\x121\n" +
@@ -16538,7 +16915,9 @@ const file_api_gobgp_proto_rawDesc = "" +
 	"\bListPath\x12\x14.api.ListPathRequest\x1a\x15.api.ListPathResponse0\x01\x12H\n" +
 	"\rAddPathStream\x12\x19.api.AddPathStreamRequest\x1a\x1a.api.AddPathStreamResponse(\x01\x12L\n" +
 	"\x0fFenceGeneration\x12\x1b.api.FenceGenerationRequest\x1a\x1c.api.FenceGenerationResponse\x12O\n" +
-	"\x10FenceGenerations\x12\x1c.api.FenceGenerationsRequest\x1a\x1d.api.FenceGenerationsResponse\x12F\n" +
+	"\x10FenceGenerations\x12\x1c.api.FenceGenerationsRequest\x1a\x1d.api.FenceGenerationsResponse\x12R\n" +
+	"\x11DeleteGenerations\x12\x1d.api.DeleteGenerationsRequest\x1a\x1e.api.DeleteGenerationsResponse\x12I\n" +
+	"\x0eGetGenerations\x12\x1a.api.GetGenerationsRequest\x1a\x1b.api.GetGenerationsResponse\x12F\n" +
 	"\rGetGeneration\x12\x19.api.GetGenerationRequest\x1a\x1a.api.GetGenerationResponse\x12U\n" +
 	"\x12LookupDestinations\x12\x1e.api.LookupDestinationsRequest\x1a\x1f.api.LookupDestinationsResponse\x127\n" +
 	"\bGetTable\x12\x14.api.GetTableRequest\x1a\x15.api.GetTableResponse\x121\n" +
@@ -16595,7 +16974,7 @@ func file_api_gobgp_proto_rawDescGZIP() []byte {
 }
 
 var file_api_gobgp_proto_enumTypes = make([]protoimpl.EnumInfo, 32)
-var file_api_gobgp_proto_msgTypes = make([]protoimpl.MessageInfo, 229)
+var file_api_gobgp_proto_msgTypes = make([]protoimpl.MessageInfo, 235)
 var file_api_gobgp_proto_goTypes = []any{
 	(TableType)(0),                           // 0: api.TableType
 	(ValidationState)(0),                     // 1: api.ValidationState
@@ -16845,34 +17224,40 @@ var file_api_gobgp_proto_goTypes = []any{
 	(*FenceGenerationsResponse)(nil),         // 245: api.FenceGenerationsResponse
 	(*GetGenerationRequest)(nil),             // 246: api.GetGenerationRequest
 	(*GetGenerationResponse)(nil),            // 247: api.GetGenerationResponse
-	(*DestinationKey)(nil),                   // 248: api.DestinationKey
-	(*LookupDestinationsRequest)(nil),        // 249: api.LookupDestinationsRequest
-	(*OwnedPath)(nil),                        // 250: api.OwnedPath
-	(*DestinationLookup)(nil),                // 251: api.DestinationLookup
-	(*LookupDestinationsResponse)(nil),       // 252: api.LookupDestinationsResponse
-	(*WatchEventRequest_Peer)(nil),           // 253: api.WatchEventRequest.Peer
-	(*WatchEventRequest_Table)(nil),          // 254: api.WatchEventRequest.Table
-	(*WatchEventRequest_Table_Filter)(nil),   // 255: api.WatchEventRequest.Table.Filter
-	(*WatchEventResponse_PeerEvent)(nil),     // 256: api.WatchEventResponse.PeerEvent
-	(*WatchEventResponse_TableEvent)(nil),    // 257: api.WatchEventResponse.TableEvent
-	(*ListBmpResponse_BmpStation)(nil),       // 258: api.ListBmpResponse.BmpStation
-	(*ListBmpResponse_BmpStation_Conf)(nil),  // 259: api.ListBmpResponse.BmpStation.Conf
-	(*ListBmpResponse_BmpStation_State)(nil), // 260: api.ListBmpResponse.BmpStation.State
-	(*Family)(nil),                           // 261: api.Family
-	(*NLRI)(nil),                             // 262: api.NLRI
-	(*Attribute)(nil),                        // 263: api.Attribute
-	(*timestamppb.Timestamp)(nil),            // 264: google.protobuf.Timestamp
-	(*Capability)(nil),                       // 265: api.Capability
-	(*RouteDistinguisher)(nil),               // 266: api.RouteDistinguisher
-	(*RouteTarget)(nil),                      // 267: api.RouteTarget
+	(*DeleteGenerationsRequest)(nil),         // 248: api.DeleteGenerationsRequest
+	(*GenerationPathOutcome)(nil),            // 249: api.GenerationPathOutcome
+	(*GenerationDeleteResult)(nil),           // 250: api.GenerationDeleteResult
+	(*DeleteGenerationsResponse)(nil),        // 251: api.DeleteGenerationsResponse
+	(*GetGenerationsRequest)(nil),            // 252: api.GetGenerationsRequest
+	(*GetGenerationsResponse)(nil),           // 253: api.GetGenerationsResponse
+	(*DestinationKey)(nil),                   // 254: api.DestinationKey
+	(*LookupDestinationsRequest)(nil),        // 255: api.LookupDestinationsRequest
+	(*OwnedPath)(nil),                        // 256: api.OwnedPath
+	(*DestinationLookup)(nil),                // 257: api.DestinationLookup
+	(*LookupDestinationsResponse)(nil),       // 258: api.LookupDestinationsResponse
+	(*WatchEventRequest_Peer)(nil),           // 259: api.WatchEventRequest.Peer
+	(*WatchEventRequest_Table)(nil),          // 260: api.WatchEventRequest.Table
+	(*WatchEventRequest_Table_Filter)(nil),   // 261: api.WatchEventRequest.Table.Filter
+	(*WatchEventResponse_PeerEvent)(nil),     // 262: api.WatchEventResponse.PeerEvent
+	(*WatchEventResponse_TableEvent)(nil),    // 263: api.WatchEventResponse.TableEvent
+	(*ListBmpResponse_BmpStation)(nil),       // 264: api.ListBmpResponse.BmpStation
+	(*ListBmpResponse_BmpStation_Conf)(nil),  // 265: api.ListBmpResponse.BmpStation.Conf
+	(*ListBmpResponse_BmpStation_State)(nil), // 266: api.ListBmpResponse.BmpStation.State
+	(*Family)(nil),                           // 267: api.Family
+	(*NLRI)(nil),                             // 268: api.NLRI
+	(*Attribute)(nil),                        // 269: api.Attribute
+	(*timestamppb.Timestamp)(nil),            // 270: google.protobuf.Timestamp
+	(*Capability)(nil),                       // 271: api.Capability
+	(*RouteDistinguisher)(nil),               // 272: api.RouteDistinguisher
+	(*RouteTarget)(nil),                      // 273: api.RouteTarget
 }
 var file_api_gobgp_proto_depIdxs = []int32{
 	214, // 0: api.StartBgpRequest.global:type_name -> api.Global
 	214, // 1: api.GetBgpResponse.global:type_name -> api.Global
-	253, // 2: api.WatchEventRequest.peer:type_name -> api.WatchEventRequest.Peer
-	254, // 3: api.WatchEventRequest.table:type_name -> api.WatchEventRequest.Table
-	256, // 4: api.WatchEventResponse.peer:type_name -> api.WatchEventResponse.PeerEvent
-	257, // 5: api.WatchEventResponse.table:type_name -> api.WatchEventResponse.TableEvent
+	259, // 2: api.WatchEventRequest.peer:type_name -> api.WatchEventRequest.Peer
+	260, // 3: api.WatchEventRequest.table:type_name -> api.WatchEventRequest.Table
+	262, // 4: api.WatchEventResponse.peer:type_name -> api.WatchEventResponse.PeerEvent
+	263, // 5: api.WatchEventResponse.table:type_name -> api.WatchEventResponse.TableEvent
 	144, // 6: api.AddPeerRequest.peer:type_name -> api.Peer
 	144, // 7: api.ListPeerResponse.peer:type_name -> api.Peer
 	144, // 8: api.UpdatePeerRequest.peer:type_name -> api.Peer
@@ -16886,14 +17271,14 @@ var file_api_gobgp_proto_depIdxs = []int32{
 	142, // 16: api.AddPathRequest.path:type_name -> api.Path
 	238, // 17: api.AddPathRequest.generation_tag:type_name -> api.GenerationTag
 	0,   // 18: api.DeletePathRequest.table_type:type_name -> api.TableType
-	261, // 19: api.DeletePathRequest.family:type_name -> api.Family
+	267, // 19: api.DeletePathRequest.family:type_name -> api.Family
 	142, // 20: api.DeletePathRequest.path:type_name -> api.Path
 	238, // 21: api.DeletePathRequest.generation_tag:type_name -> api.GenerationTag
 	14,  // 22: api.DeletePathResponse.outcome:type_name -> api.GenerationDeleteOutcome
 	19,  // 23: api.TableLookupPrefix.type:type_name -> api.TableLookupPrefix.Type
-	262, // 24: api.TableLookupPrefix.nlri:type_name -> api.NLRI
+	268, // 24: api.TableLookupPrefix.nlri:type_name -> api.NLRI
 	0,   // 25: api.ListPathRequest.table_type:type_name -> api.TableType
-	261, // 26: api.ListPathRequest.family:type_name -> api.Family
+	267, // 26: api.ListPathRequest.family:type_name -> api.Family
 	74,  // 27: api.ListPathRequest.prefixes:type_name -> api.TableLookupPrefix
 	20,  // 28: api.ListPathRequest.sort_type:type_name -> api.ListPathRequest.SortType
 	143, // 29: api.ListPathResponse.destination:type_name -> api.Destination
@@ -16901,7 +17286,7 @@ var file_api_gobgp_proto_depIdxs = []int32{
 	142, // 31: api.AddPathStreamRequest.paths:type_name -> api.Path
 	238, // 32: api.AddPathStreamRequest.generation_tag:type_name -> api.GenerationTag
 	0,   // 33: api.GetTableRequest.table_type:type_name -> api.TableType
-	261, // 34: api.GetTableRequest.family:type_name -> api.Family
+	267, // 34: api.GetTableRequest.family:type_name -> api.Family
 	212, // 35: api.AddVrfRequest.vrf:type_name -> api.Vrf
 	212, // 36: api.ListVrfResponse.vrf:type_name -> api.Vrf
 	208, // 37: api.AddPolicyRequest.policy:type_name -> api.Policy
@@ -16922,23 +17307,23 @@ var file_api_gobgp_proto_depIdxs = []int32{
 	8,   // 52: api.ListPolicyAssignmentRequest.direction:type_name -> api.PolicyDirection
 	209, // 53: api.ListPolicyAssignmentResponse.assignment:type_name -> api.PolicyAssignment
 	209, // 54: api.SetPolicyAssignmentRequest.assignment:type_name -> api.PolicyAssignment
-	261, // 55: api.ListRpkiRequest.family:type_name -> api.Family
+	267, // 55: api.ListRpkiRequest.family:type_name -> api.Family
 	218, // 56: api.ListRpkiResponse.server:type_name -> api.Rpki
-	261, // 57: api.ListRpkiTableRequest.family:type_name -> api.Family
+	267, // 57: api.ListRpkiTableRequest.family:type_name -> api.Family
 	211, // 58: api.ListRpkiTableResponse.roa:type_name -> api.Roa
 	21,  // 59: api.EnableMrtRequest.dump_type:type_name -> api.EnableMrtRequest.DumpType
 	22,  // 60: api.AddBmpRequest.policy:type_name -> api.AddBmpRequest.MonitoringPolicy
-	258, // 61: api.ListBmpResponse.station:type_name -> api.ListBmpResponse.BmpStation
+	264, // 61: api.ListBmpResponse.station:type_name -> api.ListBmpResponse.BmpStation
 	1,   // 62: api.Validation.state:type_name -> api.ValidationState
 	23,  // 63: api.Validation.reason:type_name -> api.Validation.Reason
 	211, // 64: api.Validation.matched:type_name -> api.Roa
 	211, // 65: api.Validation.unmatched_asn:type_name -> api.Roa
 	211, // 66: api.Validation.unmatched_length:type_name -> api.Roa
-	262, // 67: api.Path.nlri:type_name -> api.NLRI
-	263, // 68: api.Path.pattrs:type_name -> api.Attribute
-	264, // 69: api.Path.age:type_name -> google.protobuf.Timestamp
+	268, // 67: api.Path.nlri:type_name -> api.NLRI
+	269, // 68: api.Path.pattrs:type_name -> api.Attribute
+	270, // 69: api.Path.age:type_name -> google.protobuf.Timestamp
 	141, // 70: api.Path.validation:type_name -> api.Validation
-	261, // 71: api.Path.family:type_name -> api.Family
+	267, // 71: api.Path.family:type_name -> api.Family
 	142, // 72: api.Destination.paths:type_name -> api.Path
 	147, // 73: api.Peer.apply_policy:type_name -> api.ApplyPolicy
 	149, // 74: api.Peer.conf:type_name -> api.PeerConf
@@ -16968,7 +17353,7 @@ var file_api_gobgp_proto_depIdxs = []int32{
 	235, // 98: api.PeerGroup.tcp_ao:type_name -> api.TcpAoPeerConfig
 	209, // 99: api.ApplyPolicy.export_policy:type_name -> api.PolicyAssignment
 	209, // 100: api.ApplyPolicy.import_policy:type_name -> api.PolicyAssignment
-	261, // 101: api.PrefixLimit.family:type_name -> api.Family
+	267, // 101: api.PrefixLimit.family:type_name -> api.Family
 	2,   // 102: api.PeerConf.type:type_name -> api.PeerType
 	3,   // 103: api.PeerConf.remove_private:type_name -> api.RemovePrivate
 	2,   // 104: api.PeerGroupConf.type:type_name -> api.PeerType
@@ -16981,8 +17366,8 @@ var file_api_gobgp_proto_depIdxs = []int32{
 	3,   // 111: api.PeerState.remove_private:type_name -> api.RemovePrivate
 	24,  // 112: api.PeerState.session_state:type_name -> api.PeerState.SessionState
 	25,  // 113: api.PeerState.admin_state:type_name -> api.PeerState.AdminState
-	265, // 114: api.PeerState.remote_cap:type_name -> api.Capability
-	265, // 115: api.PeerState.local_cap:type_name -> api.Capability
+	271, // 114: api.PeerState.remote_cap:type_name -> api.Capability
+	271, // 115: api.PeerState.local_cap:type_name -> api.Capability
 	26,  // 116: api.PeerState.disconnect_reason:type_name -> api.PeerState.DisconnectReason
 	222, // 117: api.PeerState.bfd_state:type_name -> api.BfdPeerState
 	236, // 118: api.PeerState.tcp_ao_state:type_name -> api.TcpAoPeerState
@@ -16990,12 +17375,12 @@ var file_api_gobgp_proto_depIdxs = []int32{
 	157, // 120: api.Messages.sent:type_name -> api.Message
 	160, // 121: api.Timers.config:type_name -> api.TimersConfig
 	161, // 122: api.Timers.state:type_name -> api.TimersState
-	264, // 123: api.TimersState.uptime:type_name -> google.protobuf.Timestamp
-	264, // 124: api.TimersState.downtime:type_name -> google.protobuf.Timestamp
+	270, // 123: api.TimersState.uptime:type_name -> google.protobuf.Timestamp
+	270, // 124: api.TimersState.downtime:type_name -> google.protobuf.Timestamp
 	165, // 125: api.MpGracefulRestart.config:type_name -> api.MpGracefulRestartConfig
 	166, // 126: api.MpGracefulRestart.state:type_name -> api.MpGracefulRestartState
-	261, // 127: api.AfiSafiConfig.family:type_name -> api.Family
-	261, // 128: api.AfiSafiState.family:type_name -> api.Family
+	267, // 127: api.AfiSafiConfig.family:type_name -> api.Family
+	267, // 128: api.AfiSafiState.family:type_name -> api.Family
 	170, // 129: api.RouteSelectionOptions.config:type_name -> api.RouteSelectionOptionsConfig
 	171, // 130: api.RouteSelectionOptions.state:type_name -> api.RouteSelectionOptionsState
 	175, // 131: api.Ebgp.config:type_name -> api.EbgpConfig
@@ -17036,7 +17421,7 @@ var file_api_gobgp_proto_depIdxs = []int32{
 	1,   // 166: api.Conditions.rpki_result:type_name -> api.ValidationState
 	28,  // 167: api.Conditions.route_type:type_name -> api.Conditions.RouteType
 	194, // 168: api.Conditions.large_community_set:type_name -> api.MatchSet
-	261, // 169: api.Conditions.afi_safi_in:type_name -> api.Family
+	267, // 169: api.Conditions.afi_safi_in:type_name -> api.Family
 	196, // 170: api.Conditions.community_count:type_name -> api.CommunityCount
 	6,   // 171: api.Conditions.origin:type_name -> api.OriginType
 	197, // 172: api.Conditions.local_pref_eq:type_name -> api.LocalPrefEq
@@ -17062,15 +17447,15 @@ var file_api_gobgp_proto_depIdxs = []int32{
 	193, // 192: api.RoutingPolicy.defined_sets:type_name -> api.DefinedSet
 	208, // 193: api.RoutingPolicy.policies:type_name -> api.Policy
 	216, // 194: api.Roa.conf:type_name -> api.RPKIConf
-	266, // 195: api.Vrf.rd:type_name -> api.RouteDistinguisher
-	267, // 196: api.Vrf.import_rt:type_name -> api.RouteTarget
-	267, // 197: api.Vrf.export_rt:type_name -> api.RouteTarget
+	272, // 195: api.Vrf.rd:type_name -> api.RouteDistinguisher
+	273, // 196: api.Vrf.import_rt:type_name -> api.RouteTarget
+	273, // 197: api.Vrf.export_rt:type_name -> api.RouteTarget
 	170, // 198: api.Global.route_selection_options:type_name -> api.RouteSelectionOptionsConfig
 	213, // 199: api.Global.default_route_distance:type_name -> api.DefaultRouteDistance
 	215, // 200: api.Global.confederation:type_name -> api.Confederation
 	164, // 201: api.Global.graceful_restart:type_name -> api.GracefulRestart
-	264, // 202: api.RPKIState.uptime:type_name -> google.protobuf.Timestamp
-	264, // 203: api.RPKIState.downtime:type_name -> google.protobuf.Timestamp
+	270, // 202: api.RPKIState.uptime:type_name -> google.protobuf.Timestamp
+	270, // 203: api.RPKIState.downtime:type_name -> google.protobuf.Timestamp
 	216, // 204: api.Rpki.conf:type_name -> api.RPKIConf
 	217, // 205: api.Rpki.state:type_name -> api.RPKIState
 	31,  // 206: api.SetLogLevelRequest.level:type_name -> api.SetLogLevelRequest.Level
@@ -17088,172 +17473,181 @@ var file_api_gobgp_proto_depIdxs = []int32{
 	226, // 218: api.ListTcpAoKeychainResponse.keychain:type_name -> api.TcpAoKeychain
 	237, // 219: api.TcpAoPeerState.keys:type_name -> api.TcpAoKeyState
 	15,  // 220: api.GenerationReceipt.kind:type_name -> api.GenerationCommandKind
-	264, // 221: api.GenerationReceipt.applied_at:type_name -> google.protobuf.Timestamp
+	270, // 221: api.GenerationReceipt.applied_at:type_name -> google.protobuf.Timestamp
 	14,  // 222: api.GenerationReceipt.delete_outcome:type_name -> api.GenerationDeleteOutcome
-	261, // 223: api.GenerationPath.family:type_name -> api.Family
-	262, // 224: api.GenerationPath.nlri:type_name -> api.NLRI
+	267, // 223: api.GenerationPath.family:type_name -> api.Family
+	268, // 224: api.GenerationPath.nlri:type_name -> api.NLRI
 	13,  // 225: api.GenerationPath.state:type_name -> api.GenerationPathState
 	238, // 226: api.GenerationPath.replaced_by:type_name -> api.GenerationTag
 	142, // 227: api.GenerationPath.path:type_name -> api.Path
-	264, // 228: api.GenerationPath.added_at:type_name -> google.protobuf.Timestamp
-	264, // 229: api.GenerationPath.ended_at:type_name -> google.protobuf.Timestamp
+	270, // 228: api.GenerationPath.added_at:type_name -> google.protobuf.Timestamp
+	270, // 229: api.GenerationPath.ended_at:type_name -> google.protobuf.Timestamp
 	12,  // 230: api.GenerationStatus.state:type_name -> api.GenerationState
-	264, // 231: api.GenerationStatus.fenced_at:type_name -> google.protobuf.Timestamp
+	270, // 231: api.GenerationStatus.fenced_at:type_name -> google.protobuf.Timestamp
 	239, // 232: api.GenerationStatus.receipts:type_name -> api.GenerationReceipt
 	240, // 233: api.GenerationStatus.paths:type_name -> api.GenerationPath
 	241, // 234: api.FenceGenerationResponse.status:type_name -> api.GenerationStatus
 	243, // 235: api.FenceGenerationsResponse.results:type_name -> api.FenceGenerationResponse
 	241, // 236: api.GetGenerationResponse.status:type_name -> api.GenerationStatus
-	261, // 237: api.DestinationKey.family:type_name -> api.Family
-	262, // 238: api.DestinationKey.nlri:type_name -> api.NLRI
-	0,   // 239: api.LookupDestinationsRequest.table_type:type_name -> api.TableType
-	248, // 240: api.LookupDestinationsRequest.keys:type_name -> api.DestinationKey
-	142, // 241: api.OwnedPath.path:type_name -> api.Path
-	238, // 242: api.OwnedPath.owner:type_name -> api.GenerationTag
-	248, // 243: api.DestinationLookup.key:type_name -> api.DestinationKey
-	250, // 244: api.DestinationLookup.paths:type_name -> api.OwnedPath
-	251, // 245: api.LookupDestinationsResponse.destinations:type_name -> api.DestinationLookup
-	255, // 246: api.WatchEventRequest.Table.filters:type_name -> api.WatchEventRequest.Table.Filter
-	16,  // 247: api.WatchEventRequest.Table.Filter.type:type_name -> api.WatchEventRequest.Table.Filter.Type
-	17,  // 248: api.WatchEventResponse.PeerEvent.type:type_name -> api.WatchEventResponse.PeerEvent.Type
-	144, // 249: api.WatchEventResponse.PeerEvent.peer:type_name -> api.Peer
-	142, // 250: api.WatchEventResponse.TableEvent.paths:type_name -> api.Path
-	264, // 251: api.WatchEventResponse.TableEvent.timestamp:type_name -> google.protobuf.Timestamp
-	259, // 252: api.ListBmpResponse.BmpStation.conf:type_name -> api.ListBmpResponse.BmpStation.Conf
-	260, // 253: api.ListBmpResponse.BmpStation.state:type_name -> api.ListBmpResponse.BmpStation.State
-	264, // 254: api.ListBmpResponse.BmpStation.State.uptime:type_name -> google.protobuf.Timestamp
-	264, // 255: api.ListBmpResponse.BmpStation.State.downtime:type_name -> google.protobuf.Timestamp
-	32,  // 256: api.GoBgpService.StartBgp:input_type -> api.StartBgpRequest
-	34,  // 257: api.GoBgpService.StopBgp:input_type -> api.StopBgpRequest
-	36,  // 258: api.GoBgpService.GetBgp:input_type -> api.GetBgpRequest
-	38,  // 259: api.GoBgpService.WatchEvent:input_type -> api.WatchEventRequest
-	40,  // 260: api.GoBgpService.AddPeer:input_type -> api.AddPeerRequest
-	42,  // 261: api.GoBgpService.DeletePeer:input_type -> api.DeletePeerRequest
-	44,  // 262: api.GoBgpService.ListPeer:input_type -> api.ListPeerRequest
-	46,  // 263: api.GoBgpService.UpdatePeer:input_type -> api.UpdatePeerRequest
-	48,  // 264: api.GoBgpService.ResetPeer:input_type -> api.ResetPeerRequest
-	50,  // 265: api.GoBgpService.ShutdownPeer:input_type -> api.ShutdownPeerRequest
-	52,  // 266: api.GoBgpService.EnablePeer:input_type -> api.EnablePeerRequest
-	54,  // 267: api.GoBgpService.DisablePeer:input_type -> api.DisablePeerRequest
-	56,  // 268: api.GoBgpService.AddPeerGroup:input_type -> api.AddPeerGroupRequest
-	58,  // 269: api.GoBgpService.DeletePeerGroup:input_type -> api.DeletePeerGroupRequest
-	62,  // 270: api.GoBgpService.ListPeerGroup:input_type -> api.ListPeerGroupRequest
-	60,  // 271: api.GoBgpService.UpdatePeerGroup:input_type -> api.UpdatePeerGroupRequest
-	64,  // 272: api.GoBgpService.AddDynamicNeighbor:input_type -> api.AddDynamicNeighborRequest
-	68,  // 273: api.GoBgpService.ListDynamicNeighbor:input_type -> api.ListDynamicNeighborRequest
-	66,  // 274: api.GoBgpService.DeleteDynamicNeighbor:input_type -> api.DeleteDynamicNeighborRequest
-	70,  // 275: api.GoBgpService.AddPath:input_type -> api.AddPathRequest
-	72,  // 276: api.GoBgpService.DeletePath:input_type -> api.DeletePathRequest
-	75,  // 277: api.GoBgpService.ListPath:input_type -> api.ListPathRequest
-	77,  // 278: api.GoBgpService.AddPathStream:input_type -> api.AddPathStreamRequest
-	242, // 279: api.GoBgpService.FenceGeneration:input_type -> api.FenceGenerationRequest
-	244, // 280: api.GoBgpService.FenceGenerations:input_type -> api.FenceGenerationsRequest
-	246, // 281: api.GoBgpService.GetGeneration:input_type -> api.GetGenerationRequest
-	249, // 282: api.GoBgpService.LookupDestinations:input_type -> api.LookupDestinationsRequest
-	79,  // 283: api.GoBgpService.GetTable:input_type -> api.GetTableRequest
-	81,  // 284: api.GoBgpService.AddVrf:input_type -> api.AddVrfRequest
-	83,  // 285: api.GoBgpService.DeleteVrf:input_type -> api.DeleteVrfRequest
-	85,  // 286: api.GoBgpService.ListVrf:input_type -> api.ListVrfRequest
-	87,  // 287: api.GoBgpService.AddPolicy:input_type -> api.AddPolicyRequest
-	89,  // 288: api.GoBgpService.DeletePolicy:input_type -> api.DeletePolicyRequest
-	91,  // 289: api.GoBgpService.ListPolicy:input_type -> api.ListPolicyRequest
-	93,  // 290: api.GoBgpService.SetPolicies:input_type -> api.SetPoliciesRequest
-	95,  // 291: api.GoBgpService.AddDefinedSet:input_type -> api.AddDefinedSetRequest
-	97,  // 292: api.GoBgpService.DeleteDefinedSet:input_type -> api.DeleteDefinedSetRequest
-	99,  // 293: api.GoBgpService.ListDefinedSet:input_type -> api.ListDefinedSetRequest
-	101, // 294: api.GoBgpService.AddStatement:input_type -> api.AddStatementRequest
-	103, // 295: api.GoBgpService.DeleteStatement:input_type -> api.DeleteStatementRequest
-	105, // 296: api.GoBgpService.ListStatement:input_type -> api.ListStatementRequest
-	107, // 297: api.GoBgpService.AddPolicyAssignment:input_type -> api.AddPolicyAssignmentRequest
-	109, // 298: api.GoBgpService.DeletePolicyAssignment:input_type -> api.DeletePolicyAssignmentRequest
-	111, // 299: api.GoBgpService.ListPolicyAssignment:input_type -> api.ListPolicyAssignmentRequest
-	113, // 300: api.GoBgpService.SetPolicyAssignment:input_type -> api.SetPolicyAssignmentRequest
-	115, // 301: api.GoBgpService.AddRpki:input_type -> api.AddRpkiRequest
-	117, // 302: api.GoBgpService.DeleteRpki:input_type -> api.DeleteRpkiRequest
-	119, // 303: api.GoBgpService.ListRpki:input_type -> api.ListRpkiRequest
-	121, // 304: api.GoBgpService.EnableRpki:input_type -> api.EnableRpkiRequest
-	123, // 305: api.GoBgpService.DisableRpki:input_type -> api.DisableRpkiRequest
-	125, // 306: api.GoBgpService.ResetRpki:input_type -> api.ResetRpkiRequest
-	127, // 307: api.GoBgpService.ListRpkiTable:input_type -> api.ListRpkiTableRequest
-	129, // 308: api.GoBgpService.EnableZebra:input_type -> api.EnableZebraRequest
-	131, // 309: api.GoBgpService.EnableMrt:input_type -> api.EnableMrtRequest
-	133, // 310: api.GoBgpService.DisableMrt:input_type -> api.DisableMrtRequest
-	135, // 311: api.GoBgpService.AddBmp:input_type -> api.AddBmpRequest
-	137, // 312: api.GoBgpService.DeleteBmp:input_type -> api.DeleteBmpRequest
-	139, // 313: api.GoBgpService.ListBmp:input_type -> api.ListBmpRequest
-	219, // 314: api.GoBgpService.SetLogLevel:input_type -> api.SetLogLevelRequest
-	227, // 315: api.GoBgpService.AddTcpAoKeychain:input_type -> api.AddTcpAoKeychainRequest
-	229, // 316: api.GoBgpService.UpdateTcpAoKeychain:input_type -> api.UpdateTcpAoKeychainRequest
-	231, // 317: api.GoBgpService.DeleteTcpAoKeychain:input_type -> api.DeleteTcpAoKeychainRequest
-	233, // 318: api.GoBgpService.ListTcpAoKeychain:input_type -> api.ListTcpAoKeychainRequest
-	33,  // 319: api.GoBgpService.StartBgp:output_type -> api.StartBgpResponse
-	35,  // 320: api.GoBgpService.StopBgp:output_type -> api.StopBgpResponse
-	37,  // 321: api.GoBgpService.GetBgp:output_type -> api.GetBgpResponse
-	39,  // 322: api.GoBgpService.WatchEvent:output_type -> api.WatchEventResponse
-	41,  // 323: api.GoBgpService.AddPeer:output_type -> api.AddPeerResponse
-	43,  // 324: api.GoBgpService.DeletePeer:output_type -> api.DeletePeerResponse
-	45,  // 325: api.GoBgpService.ListPeer:output_type -> api.ListPeerResponse
-	47,  // 326: api.GoBgpService.UpdatePeer:output_type -> api.UpdatePeerResponse
-	49,  // 327: api.GoBgpService.ResetPeer:output_type -> api.ResetPeerResponse
-	51,  // 328: api.GoBgpService.ShutdownPeer:output_type -> api.ShutdownPeerResponse
-	53,  // 329: api.GoBgpService.EnablePeer:output_type -> api.EnablePeerResponse
-	55,  // 330: api.GoBgpService.DisablePeer:output_type -> api.DisablePeerResponse
-	57,  // 331: api.GoBgpService.AddPeerGroup:output_type -> api.AddPeerGroupResponse
-	59,  // 332: api.GoBgpService.DeletePeerGroup:output_type -> api.DeletePeerGroupResponse
-	63,  // 333: api.GoBgpService.ListPeerGroup:output_type -> api.ListPeerGroupResponse
-	61,  // 334: api.GoBgpService.UpdatePeerGroup:output_type -> api.UpdatePeerGroupResponse
-	65,  // 335: api.GoBgpService.AddDynamicNeighbor:output_type -> api.AddDynamicNeighborResponse
-	69,  // 336: api.GoBgpService.ListDynamicNeighbor:output_type -> api.ListDynamicNeighborResponse
-	67,  // 337: api.GoBgpService.DeleteDynamicNeighbor:output_type -> api.DeleteDynamicNeighborResponse
-	71,  // 338: api.GoBgpService.AddPath:output_type -> api.AddPathResponse
-	73,  // 339: api.GoBgpService.DeletePath:output_type -> api.DeletePathResponse
-	76,  // 340: api.GoBgpService.ListPath:output_type -> api.ListPathResponse
-	78,  // 341: api.GoBgpService.AddPathStream:output_type -> api.AddPathStreamResponse
-	243, // 342: api.GoBgpService.FenceGeneration:output_type -> api.FenceGenerationResponse
-	245, // 343: api.GoBgpService.FenceGenerations:output_type -> api.FenceGenerationsResponse
-	247, // 344: api.GoBgpService.GetGeneration:output_type -> api.GetGenerationResponse
-	252, // 345: api.GoBgpService.LookupDestinations:output_type -> api.LookupDestinationsResponse
-	80,  // 346: api.GoBgpService.GetTable:output_type -> api.GetTableResponse
-	82,  // 347: api.GoBgpService.AddVrf:output_type -> api.AddVrfResponse
-	84,  // 348: api.GoBgpService.DeleteVrf:output_type -> api.DeleteVrfResponse
-	86,  // 349: api.GoBgpService.ListVrf:output_type -> api.ListVrfResponse
-	88,  // 350: api.GoBgpService.AddPolicy:output_type -> api.AddPolicyResponse
-	90,  // 351: api.GoBgpService.DeletePolicy:output_type -> api.DeletePolicyResponse
-	92,  // 352: api.GoBgpService.ListPolicy:output_type -> api.ListPolicyResponse
-	94,  // 353: api.GoBgpService.SetPolicies:output_type -> api.SetPoliciesResponse
-	96,  // 354: api.GoBgpService.AddDefinedSet:output_type -> api.AddDefinedSetResponse
-	98,  // 355: api.GoBgpService.DeleteDefinedSet:output_type -> api.DeleteDefinedSetResponse
-	100, // 356: api.GoBgpService.ListDefinedSet:output_type -> api.ListDefinedSetResponse
-	102, // 357: api.GoBgpService.AddStatement:output_type -> api.AddStatementResponse
-	104, // 358: api.GoBgpService.DeleteStatement:output_type -> api.DeleteStatementResponse
-	106, // 359: api.GoBgpService.ListStatement:output_type -> api.ListStatementResponse
-	108, // 360: api.GoBgpService.AddPolicyAssignment:output_type -> api.AddPolicyAssignmentResponse
-	110, // 361: api.GoBgpService.DeletePolicyAssignment:output_type -> api.DeletePolicyAssignmentResponse
-	112, // 362: api.GoBgpService.ListPolicyAssignment:output_type -> api.ListPolicyAssignmentResponse
-	114, // 363: api.GoBgpService.SetPolicyAssignment:output_type -> api.SetPolicyAssignmentResponse
-	116, // 364: api.GoBgpService.AddRpki:output_type -> api.AddRpkiResponse
-	118, // 365: api.GoBgpService.DeleteRpki:output_type -> api.DeleteRpkiResponse
-	120, // 366: api.GoBgpService.ListRpki:output_type -> api.ListRpkiResponse
-	122, // 367: api.GoBgpService.EnableRpki:output_type -> api.EnableRpkiResponse
-	124, // 368: api.GoBgpService.DisableRpki:output_type -> api.DisableRpkiResponse
-	126, // 369: api.GoBgpService.ResetRpki:output_type -> api.ResetRpkiResponse
-	128, // 370: api.GoBgpService.ListRpkiTable:output_type -> api.ListRpkiTableResponse
-	130, // 371: api.GoBgpService.EnableZebra:output_type -> api.EnableZebraResponse
-	132, // 372: api.GoBgpService.EnableMrt:output_type -> api.EnableMrtResponse
-	134, // 373: api.GoBgpService.DisableMrt:output_type -> api.DisableMrtResponse
-	136, // 374: api.GoBgpService.AddBmp:output_type -> api.AddBmpResponse
-	138, // 375: api.GoBgpService.DeleteBmp:output_type -> api.DeleteBmpResponse
-	140, // 376: api.GoBgpService.ListBmp:output_type -> api.ListBmpResponse
-	220, // 377: api.GoBgpService.SetLogLevel:output_type -> api.SetLogLevelResponse
-	228, // 378: api.GoBgpService.AddTcpAoKeychain:output_type -> api.AddTcpAoKeychainResponse
-	230, // 379: api.GoBgpService.UpdateTcpAoKeychain:output_type -> api.UpdateTcpAoKeychainResponse
-	232, // 380: api.GoBgpService.DeleteTcpAoKeychain:output_type -> api.DeleteTcpAoKeychainResponse
-	234, // 381: api.GoBgpService.ListTcpAoKeychain:output_type -> api.ListTcpAoKeychainResponse
-	319, // [319:382] is the sub-list for method output_type
-	256, // [256:319] is the sub-list for method input_type
-	256, // [256:256] is the sub-list for extension type_name
-	256, // [256:256] is the sub-list for extension extendee
-	0,   // [0:256] is the sub-list for field type_name
+	14,  // 237: api.GenerationPathOutcome.outcome:type_name -> api.GenerationDeleteOutcome
+	249, // 238: api.GenerationDeleteResult.outcomes:type_name -> api.GenerationPathOutcome
+	241, // 239: api.GenerationDeleteResult.status:type_name -> api.GenerationStatus
+	250, // 240: api.DeleteGenerationsResponse.results:type_name -> api.GenerationDeleteResult
+	241, // 241: api.GetGenerationsResponse.statuses:type_name -> api.GenerationStatus
+	267, // 242: api.DestinationKey.family:type_name -> api.Family
+	268, // 243: api.DestinationKey.nlri:type_name -> api.NLRI
+	0,   // 244: api.LookupDestinationsRequest.table_type:type_name -> api.TableType
+	254, // 245: api.LookupDestinationsRequest.keys:type_name -> api.DestinationKey
+	142, // 246: api.OwnedPath.path:type_name -> api.Path
+	238, // 247: api.OwnedPath.owner:type_name -> api.GenerationTag
+	254, // 248: api.DestinationLookup.key:type_name -> api.DestinationKey
+	256, // 249: api.DestinationLookup.paths:type_name -> api.OwnedPath
+	257, // 250: api.LookupDestinationsResponse.destinations:type_name -> api.DestinationLookup
+	261, // 251: api.WatchEventRequest.Table.filters:type_name -> api.WatchEventRequest.Table.Filter
+	16,  // 252: api.WatchEventRequest.Table.Filter.type:type_name -> api.WatchEventRequest.Table.Filter.Type
+	17,  // 253: api.WatchEventResponse.PeerEvent.type:type_name -> api.WatchEventResponse.PeerEvent.Type
+	144, // 254: api.WatchEventResponse.PeerEvent.peer:type_name -> api.Peer
+	142, // 255: api.WatchEventResponse.TableEvent.paths:type_name -> api.Path
+	270, // 256: api.WatchEventResponse.TableEvent.timestamp:type_name -> google.protobuf.Timestamp
+	265, // 257: api.ListBmpResponse.BmpStation.conf:type_name -> api.ListBmpResponse.BmpStation.Conf
+	266, // 258: api.ListBmpResponse.BmpStation.state:type_name -> api.ListBmpResponse.BmpStation.State
+	270, // 259: api.ListBmpResponse.BmpStation.State.uptime:type_name -> google.protobuf.Timestamp
+	270, // 260: api.ListBmpResponse.BmpStation.State.downtime:type_name -> google.protobuf.Timestamp
+	32,  // 261: api.GoBgpService.StartBgp:input_type -> api.StartBgpRequest
+	34,  // 262: api.GoBgpService.StopBgp:input_type -> api.StopBgpRequest
+	36,  // 263: api.GoBgpService.GetBgp:input_type -> api.GetBgpRequest
+	38,  // 264: api.GoBgpService.WatchEvent:input_type -> api.WatchEventRequest
+	40,  // 265: api.GoBgpService.AddPeer:input_type -> api.AddPeerRequest
+	42,  // 266: api.GoBgpService.DeletePeer:input_type -> api.DeletePeerRequest
+	44,  // 267: api.GoBgpService.ListPeer:input_type -> api.ListPeerRequest
+	46,  // 268: api.GoBgpService.UpdatePeer:input_type -> api.UpdatePeerRequest
+	48,  // 269: api.GoBgpService.ResetPeer:input_type -> api.ResetPeerRequest
+	50,  // 270: api.GoBgpService.ShutdownPeer:input_type -> api.ShutdownPeerRequest
+	52,  // 271: api.GoBgpService.EnablePeer:input_type -> api.EnablePeerRequest
+	54,  // 272: api.GoBgpService.DisablePeer:input_type -> api.DisablePeerRequest
+	56,  // 273: api.GoBgpService.AddPeerGroup:input_type -> api.AddPeerGroupRequest
+	58,  // 274: api.GoBgpService.DeletePeerGroup:input_type -> api.DeletePeerGroupRequest
+	62,  // 275: api.GoBgpService.ListPeerGroup:input_type -> api.ListPeerGroupRequest
+	60,  // 276: api.GoBgpService.UpdatePeerGroup:input_type -> api.UpdatePeerGroupRequest
+	64,  // 277: api.GoBgpService.AddDynamicNeighbor:input_type -> api.AddDynamicNeighborRequest
+	68,  // 278: api.GoBgpService.ListDynamicNeighbor:input_type -> api.ListDynamicNeighborRequest
+	66,  // 279: api.GoBgpService.DeleteDynamicNeighbor:input_type -> api.DeleteDynamicNeighborRequest
+	70,  // 280: api.GoBgpService.AddPath:input_type -> api.AddPathRequest
+	72,  // 281: api.GoBgpService.DeletePath:input_type -> api.DeletePathRequest
+	75,  // 282: api.GoBgpService.ListPath:input_type -> api.ListPathRequest
+	77,  // 283: api.GoBgpService.AddPathStream:input_type -> api.AddPathStreamRequest
+	242, // 284: api.GoBgpService.FenceGeneration:input_type -> api.FenceGenerationRequest
+	244, // 285: api.GoBgpService.FenceGenerations:input_type -> api.FenceGenerationsRequest
+	248, // 286: api.GoBgpService.DeleteGenerations:input_type -> api.DeleteGenerationsRequest
+	252, // 287: api.GoBgpService.GetGenerations:input_type -> api.GetGenerationsRequest
+	246, // 288: api.GoBgpService.GetGeneration:input_type -> api.GetGenerationRequest
+	255, // 289: api.GoBgpService.LookupDestinations:input_type -> api.LookupDestinationsRequest
+	79,  // 290: api.GoBgpService.GetTable:input_type -> api.GetTableRequest
+	81,  // 291: api.GoBgpService.AddVrf:input_type -> api.AddVrfRequest
+	83,  // 292: api.GoBgpService.DeleteVrf:input_type -> api.DeleteVrfRequest
+	85,  // 293: api.GoBgpService.ListVrf:input_type -> api.ListVrfRequest
+	87,  // 294: api.GoBgpService.AddPolicy:input_type -> api.AddPolicyRequest
+	89,  // 295: api.GoBgpService.DeletePolicy:input_type -> api.DeletePolicyRequest
+	91,  // 296: api.GoBgpService.ListPolicy:input_type -> api.ListPolicyRequest
+	93,  // 297: api.GoBgpService.SetPolicies:input_type -> api.SetPoliciesRequest
+	95,  // 298: api.GoBgpService.AddDefinedSet:input_type -> api.AddDefinedSetRequest
+	97,  // 299: api.GoBgpService.DeleteDefinedSet:input_type -> api.DeleteDefinedSetRequest
+	99,  // 300: api.GoBgpService.ListDefinedSet:input_type -> api.ListDefinedSetRequest
+	101, // 301: api.GoBgpService.AddStatement:input_type -> api.AddStatementRequest
+	103, // 302: api.GoBgpService.DeleteStatement:input_type -> api.DeleteStatementRequest
+	105, // 303: api.GoBgpService.ListStatement:input_type -> api.ListStatementRequest
+	107, // 304: api.GoBgpService.AddPolicyAssignment:input_type -> api.AddPolicyAssignmentRequest
+	109, // 305: api.GoBgpService.DeletePolicyAssignment:input_type -> api.DeletePolicyAssignmentRequest
+	111, // 306: api.GoBgpService.ListPolicyAssignment:input_type -> api.ListPolicyAssignmentRequest
+	113, // 307: api.GoBgpService.SetPolicyAssignment:input_type -> api.SetPolicyAssignmentRequest
+	115, // 308: api.GoBgpService.AddRpki:input_type -> api.AddRpkiRequest
+	117, // 309: api.GoBgpService.DeleteRpki:input_type -> api.DeleteRpkiRequest
+	119, // 310: api.GoBgpService.ListRpki:input_type -> api.ListRpkiRequest
+	121, // 311: api.GoBgpService.EnableRpki:input_type -> api.EnableRpkiRequest
+	123, // 312: api.GoBgpService.DisableRpki:input_type -> api.DisableRpkiRequest
+	125, // 313: api.GoBgpService.ResetRpki:input_type -> api.ResetRpkiRequest
+	127, // 314: api.GoBgpService.ListRpkiTable:input_type -> api.ListRpkiTableRequest
+	129, // 315: api.GoBgpService.EnableZebra:input_type -> api.EnableZebraRequest
+	131, // 316: api.GoBgpService.EnableMrt:input_type -> api.EnableMrtRequest
+	133, // 317: api.GoBgpService.DisableMrt:input_type -> api.DisableMrtRequest
+	135, // 318: api.GoBgpService.AddBmp:input_type -> api.AddBmpRequest
+	137, // 319: api.GoBgpService.DeleteBmp:input_type -> api.DeleteBmpRequest
+	139, // 320: api.GoBgpService.ListBmp:input_type -> api.ListBmpRequest
+	219, // 321: api.GoBgpService.SetLogLevel:input_type -> api.SetLogLevelRequest
+	227, // 322: api.GoBgpService.AddTcpAoKeychain:input_type -> api.AddTcpAoKeychainRequest
+	229, // 323: api.GoBgpService.UpdateTcpAoKeychain:input_type -> api.UpdateTcpAoKeychainRequest
+	231, // 324: api.GoBgpService.DeleteTcpAoKeychain:input_type -> api.DeleteTcpAoKeychainRequest
+	233, // 325: api.GoBgpService.ListTcpAoKeychain:input_type -> api.ListTcpAoKeychainRequest
+	33,  // 326: api.GoBgpService.StartBgp:output_type -> api.StartBgpResponse
+	35,  // 327: api.GoBgpService.StopBgp:output_type -> api.StopBgpResponse
+	37,  // 328: api.GoBgpService.GetBgp:output_type -> api.GetBgpResponse
+	39,  // 329: api.GoBgpService.WatchEvent:output_type -> api.WatchEventResponse
+	41,  // 330: api.GoBgpService.AddPeer:output_type -> api.AddPeerResponse
+	43,  // 331: api.GoBgpService.DeletePeer:output_type -> api.DeletePeerResponse
+	45,  // 332: api.GoBgpService.ListPeer:output_type -> api.ListPeerResponse
+	47,  // 333: api.GoBgpService.UpdatePeer:output_type -> api.UpdatePeerResponse
+	49,  // 334: api.GoBgpService.ResetPeer:output_type -> api.ResetPeerResponse
+	51,  // 335: api.GoBgpService.ShutdownPeer:output_type -> api.ShutdownPeerResponse
+	53,  // 336: api.GoBgpService.EnablePeer:output_type -> api.EnablePeerResponse
+	55,  // 337: api.GoBgpService.DisablePeer:output_type -> api.DisablePeerResponse
+	57,  // 338: api.GoBgpService.AddPeerGroup:output_type -> api.AddPeerGroupResponse
+	59,  // 339: api.GoBgpService.DeletePeerGroup:output_type -> api.DeletePeerGroupResponse
+	63,  // 340: api.GoBgpService.ListPeerGroup:output_type -> api.ListPeerGroupResponse
+	61,  // 341: api.GoBgpService.UpdatePeerGroup:output_type -> api.UpdatePeerGroupResponse
+	65,  // 342: api.GoBgpService.AddDynamicNeighbor:output_type -> api.AddDynamicNeighborResponse
+	69,  // 343: api.GoBgpService.ListDynamicNeighbor:output_type -> api.ListDynamicNeighborResponse
+	67,  // 344: api.GoBgpService.DeleteDynamicNeighbor:output_type -> api.DeleteDynamicNeighborResponse
+	71,  // 345: api.GoBgpService.AddPath:output_type -> api.AddPathResponse
+	73,  // 346: api.GoBgpService.DeletePath:output_type -> api.DeletePathResponse
+	76,  // 347: api.GoBgpService.ListPath:output_type -> api.ListPathResponse
+	78,  // 348: api.GoBgpService.AddPathStream:output_type -> api.AddPathStreamResponse
+	243, // 349: api.GoBgpService.FenceGeneration:output_type -> api.FenceGenerationResponse
+	245, // 350: api.GoBgpService.FenceGenerations:output_type -> api.FenceGenerationsResponse
+	251, // 351: api.GoBgpService.DeleteGenerations:output_type -> api.DeleteGenerationsResponse
+	253, // 352: api.GoBgpService.GetGenerations:output_type -> api.GetGenerationsResponse
+	247, // 353: api.GoBgpService.GetGeneration:output_type -> api.GetGenerationResponse
+	258, // 354: api.GoBgpService.LookupDestinations:output_type -> api.LookupDestinationsResponse
+	80,  // 355: api.GoBgpService.GetTable:output_type -> api.GetTableResponse
+	82,  // 356: api.GoBgpService.AddVrf:output_type -> api.AddVrfResponse
+	84,  // 357: api.GoBgpService.DeleteVrf:output_type -> api.DeleteVrfResponse
+	86,  // 358: api.GoBgpService.ListVrf:output_type -> api.ListVrfResponse
+	88,  // 359: api.GoBgpService.AddPolicy:output_type -> api.AddPolicyResponse
+	90,  // 360: api.GoBgpService.DeletePolicy:output_type -> api.DeletePolicyResponse
+	92,  // 361: api.GoBgpService.ListPolicy:output_type -> api.ListPolicyResponse
+	94,  // 362: api.GoBgpService.SetPolicies:output_type -> api.SetPoliciesResponse
+	96,  // 363: api.GoBgpService.AddDefinedSet:output_type -> api.AddDefinedSetResponse
+	98,  // 364: api.GoBgpService.DeleteDefinedSet:output_type -> api.DeleteDefinedSetResponse
+	100, // 365: api.GoBgpService.ListDefinedSet:output_type -> api.ListDefinedSetResponse
+	102, // 366: api.GoBgpService.AddStatement:output_type -> api.AddStatementResponse
+	104, // 367: api.GoBgpService.DeleteStatement:output_type -> api.DeleteStatementResponse
+	106, // 368: api.GoBgpService.ListStatement:output_type -> api.ListStatementResponse
+	108, // 369: api.GoBgpService.AddPolicyAssignment:output_type -> api.AddPolicyAssignmentResponse
+	110, // 370: api.GoBgpService.DeletePolicyAssignment:output_type -> api.DeletePolicyAssignmentResponse
+	112, // 371: api.GoBgpService.ListPolicyAssignment:output_type -> api.ListPolicyAssignmentResponse
+	114, // 372: api.GoBgpService.SetPolicyAssignment:output_type -> api.SetPolicyAssignmentResponse
+	116, // 373: api.GoBgpService.AddRpki:output_type -> api.AddRpkiResponse
+	118, // 374: api.GoBgpService.DeleteRpki:output_type -> api.DeleteRpkiResponse
+	120, // 375: api.GoBgpService.ListRpki:output_type -> api.ListRpkiResponse
+	122, // 376: api.GoBgpService.EnableRpki:output_type -> api.EnableRpkiResponse
+	124, // 377: api.GoBgpService.DisableRpki:output_type -> api.DisableRpkiResponse
+	126, // 378: api.GoBgpService.ResetRpki:output_type -> api.ResetRpkiResponse
+	128, // 379: api.GoBgpService.ListRpkiTable:output_type -> api.ListRpkiTableResponse
+	130, // 380: api.GoBgpService.EnableZebra:output_type -> api.EnableZebraResponse
+	132, // 381: api.GoBgpService.EnableMrt:output_type -> api.EnableMrtResponse
+	134, // 382: api.GoBgpService.DisableMrt:output_type -> api.DisableMrtResponse
+	136, // 383: api.GoBgpService.AddBmp:output_type -> api.AddBmpResponse
+	138, // 384: api.GoBgpService.DeleteBmp:output_type -> api.DeleteBmpResponse
+	140, // 385: api.GoBgpService.ListBmp:output_type -> api.ListBmpResponse
+	220, // 386: api.GoBgpService.SetLogLevel:output_type -> api.SetLogLevelResponse
+	228, // 387: api.GoBgpService.AddTcpAoKeychain:output_type -> api.AddTcpAoKeychainResponse
+	230, // 388: api.GoBgpService.UpdateTcpAoKeychain:output_type -> api.UpdateTcpAoKeychainResponse
+	232, // 389: api.GoBgpService.DeleteTcpAoKeychain:output_type -> api.DeleteTcpAoKeychainResponse
+	234, // 390: api.GoBgpService.ListTcpAoKeychain:output_type -> api.ListTcpAoKeychainResponse
+	326, // [326:391] is the sub-list for method output_type
+	261, // [261:326] is the sub-list for method input_type
+	261, // [261:261] is the sub-list for extension type_name
+	261, // [261:261] is the sub-list for extension extendee
+	0,   // [0:261] is the sub-list for field type_name
 }
 
 func init() { file_api_gobgp_proto_init() }
@@ -17276,7 +17670,7 @@ func file_api_gobgp_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_gobgp_proto_rawDesc), len(file_api_gobgp_proto_rawDesc)),
 			NumEnums:      32,
-			NumMessages:   229,
+			NumMessages:   235,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

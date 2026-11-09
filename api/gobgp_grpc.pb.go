@@ -65,6 +65,8 @@ const (
 	GoBgpService_AddPathStream_FullMethodName          = "/api.GoBgpService/AddPathStream"
 	GoBgpService_FenceGeneration_FullMethodName        = "/api.GoBgpService/FenceGeneration"
 	GoBgpService_FenceGenerations_FullMethodName       = "/api.GoBgpService/FenceGenerations"
+	GoBgpService_DeleteGenerations_FullMethodName      = "/api.GoBgpService/DeleteGenerations"
+	GoBgpService_GetGenerations_FullMethodName         = "/api.GoBgpService/GetGenerations"
 	GoBgpService_GetGeneration_FullMethodName          = "/api.GoBgpService/GetGeneration"
 	GoBgpService_LookupDestinations_FullMethodName     = "/api.GoBgpService/LookupDestinations"
 	GoBgpService_GetTable_FullMethodName               = "/api.GoBgpService/GetTable"
@@ -137,6 +139,8 @@ type GoBgpServiceClient interface {
 	// Generation fence. See GenerationTag.
 	FenceGeneration(ctx context.Context, in *FenceGenerationRequest, opts ...grpc.CallOption) (*FenceGenerationResponse, error)
 	FenceGenerations(ctx context.Context, in *FenceGenerationsRequest, opts ...grpc.CallOption) (*FenceGenerationsResponse, error)
+	DeleteGenerations(ctx context.Context, in *DeleteGenerationsRequest, opts ...grpc.CallOption) (*DeleteGenerationsResponse, error)
+	GetGenerations(ctx context.Context, in *GetGenerationsRequest, opts ...grpc.CallOption) (*GetGenerationsResponse, error)
 	GetGeneration(ctx context.Context, in *GetGenerationRequest, opts ...grpc.CallOption) (*GetGenerationResponse, error)
 	LookupDestinations(ctx context.Context, in *LookupDestinationsRequest, opts ...grpc.CallOption) (*LookupDestinationsResponse, error)
 	GetTable(ctx context.Context, in *GetTableRequest, opts ...grpc.CallOption) (*GetTableResponse, error)
@@ -477,6 +481,26 @@ func (c *goBgpServiceClient) FenceGenerations(ctx context.Context, in *FenceGene
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FenceGenerationsResponse)
 	err := c.cc.Invoke(ctx, GoBgpService_FenceGenerations_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *goBgpServiceClient) DeleteGenerations(ctx context.Context, in *DeleteGenerationsRequest, opts ...grpc.CallOption) (*DeleteGenerationsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteGenerationsResponse)
+	err := c.cc.Invoke(ctx, GoBgpService_DeleteGenerations_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *goBgpServiceClient) GetGenerations(ctx context.Context, in *GetGenerationsRequest, opts ...grpc.CallOption) (*GetGenerationsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetGenerationsResponse)
+	err := c.cc.Invoke(ctx, GoBgpService_GetGenerations_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -976,6 +1000,8 @@ type GoBgpServiceServer interface {
 	// Generation fence. See GenerationTag.
 	FenceGeneration(context.Context, *FenceGenerationRequest) (*FenceGenerationResponse, error)
 	FenceGenerations(context.Context, *FenceGenerationsRequest) (*FenceGenerationsResponse, error)
+	DeleteGenerations(context.Context, *DeleteGenerationsRequest) (*DeleteGenerationsResponse, error)
+	GetGenerations(context.Context, *GetGenerationsRequest) (*GetGenerationsResponse, error)
 	GetGeneration(context.Context, *GetGenerationRequest) (*GetGenerationResponse, error)
 	LookupDestinations(context.Context, *LookupDestinationsRequest) (*LookupDestinationsResponse, error)
 	GetTable(context.Context, *GetTableRequest) (*GetTableResponse, error)
@@ -1098,6 +1124,12 @@ func (UnimplementedGoBgpServiceServer) FenceGeneration(context.Context, *FenceGe
 }
 func (UnimplementedGoBgpServiceServer) FenceGenerations(context.Context, *FenceGenerationsRequest) (*FenceGenerationsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FenceGenerations not implemented")
+}
+func (UnimplementedGoBgpServiceServer) DeleteGenerations(context.Context, *DeleteGenerationsRequest) (*DeleteGenerationsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteGenerations not implemented")
+}
+func (UnimplementedGoBgpServiceServer) GetGenerations(context.Context, *GetGenerationsRequest) (*GetGenerationsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetGenerations not implemented")
 }
 func (UnimplementedGoBgpServiceServer) GetGeneration(context.Context, *GetGenerationRequest) (*GetGenerationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetGeneration not implemented")
@@ -1634,6 +1666,42 @@ func _GoBgpService_FenceGenerations_Handler(srv interface{}, ctx context.Context
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(GoBgpServiceServer).FenceGenerations(ctx, req.(*FenceGenerationsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GoBgpService_DeleteGenerations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteGenerationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GoBgpServiceServer).DeleteGenerations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GoBgpService_DeleteGenerations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GoBgpServiceServer).DeleteGenerations(ctx, req.(*DeleteGenerationsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GoBgpService_GetGenerations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetGenerationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GoBgpServiceServer).GetGenerations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GoBgpService_GetGenerations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GoBgpServiceServer).GetGenerations(ctx, req.(*GetGenerationsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2341,6 +2409,14 @@ var GoBgpService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FenceGenerations",
 			Handler:    _GoBgpService_FenceGenerations_Handler,
+		},
+		{
+			MethodName: "DeleteGenerations",
+			Handler:    _GoBgpService_DeleteGenerations_Handler,
+		},
+		{
+			MethodName: "GetGenerations",
+			Handler:    _GoBgpService_GetGenerations_Handler,
 		},
 		{
 			MethodName: "GetGeneration",

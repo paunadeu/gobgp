@@ -66,6 +66,8 @@ service GoBgpService {
   // Generation fence. See GenerationTag.
   rpc FenceGeneration(FenceGenerationRequest) returns (FenceGenerationResponse);
   rpc FenceGenerations(FenceGenerationsRequest) returns (FenceGenerationsResponse);
+  rpc DeleteGenerations(DeleteGenerationsRequest) returns (DeleteGenerationsResponse);
+  rpc GetGenerations(GetGenerationsRequest) returns (GetGenerationsResponse);
   rpc GetGeneration(GetGenerationRequest) returns (GetGenerationResponse);
   rpc LookupDestinations(LookupDestinationsRequest) returns (LookupDestinationsResponse);
 
@@ -1611,6 +1613,11 @@ enum GenerationDeleteOutcome {
   // Another write had taken the route key; nothing changed, and the path
   // there now is left alone.
   GENERATION_DELETE_OUTCOME_REPLACED = 3;
+  // DeleteGenerations only: the index named the path current but the RIB
+  // held no local path at its route key; it is marked deleted.
+  GENERATION_DELETE_OUTCOME_ALREADY_ABSENT = 4;
+  // DeleteGenerations only: the generation is not fenced; nothing changed.
+  GENERATION_DELETE_OUTCOME_REFUSED = 5;
 }
 
 enum GenerationCommandKind {
@@ -1715,6 +1722,54 @@ message GetGenerationRequest {
 
 message GetGenerationResponse {
   GenerationStatus status = 1;
+}
+
+// DeleteGenerations deletes every current path of the listed generations of
+// one tenant. Only fenced generations qualify; a generation that is not
+// fenced is reported refused and the others still proceed. A path is
+// deleted only while one of the listed generations owns it: a path that
+// another write took over is kept. The work runs in the management loop in
+// steps of a bounded number of paths; the statuses are taken in the last
+// step, after every delete.
+message DeleteGenerationsRequest {
+  string tenant = 1000;
+  // 1 to 1024 entries, none 0. A generation listed twice is handled and
+  // reported once.
+  repeated uint64 generations = 1001;
+  string speaker = 1002;
+}
+
+message GenerationPathOutcome {
+  bytes uuid = 1000;
+  GenerationDeleteOutcome outcome = 1001;
+}
+
+message GenerationDeleteResult {
+  uint64 generation = 1000;
+  // The generation is not fenced; its paths are untouched.
+  bool refused = 1001;
+  // One per UUID the generation was given in this incarnation.
+  repeated GenerationPathOutcome outcomes = 1002;
+  GenerationStatus status = 1003;
+}
+
+message DeleteGenerationsResponse {
+  // One per distinct generation, in the order of first mention.
+  repeated GenerationDeleteResult results = 1000;
+  // Management-loop steps the call took.
+  uint32 steps = 1001;
+}
+
+// GetGenerations is GetGeneration for up to 1024 generations of a tenant,
+// read in one management-loop step.
+message GetGenerationsRequest {
+  string tenant = 1000;
+  repeated uint64 generations = 1001;
+}
+
+message GetGenerationsResponse {
+  // One per distinct generation, in the order of first mention.
+  repeated GenerationStatus statuses = 1000;
 }
 
 message DestinationKey {

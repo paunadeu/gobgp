@@ -850,25 +850,12 @@ func (s *BgpServer) FenceGenerations(ctx context.Context, r *api.FenceGeneration
 	if r == nil {
 		return nil, genErr(codes.InvalidArgument, ErrGenerationInvalid, "nil request")
 	}
-	if len(r.Generations) == 0 {
-		return nil, genErr(codes.InvalidArgument, ErrGenerationInvalid, "no generation")
-	}
-	if len(r.Generations) > MaxFenceGenerations {
-		return nil, genErr(codes.InvalidArgument, ErrGenerationInvalid, "%d generations, at most %d per call", len(r.Generations), MaxFenceGenerations)
-	}
-	gens := make([]uint64, 0, len(r.Generations))
-	seen := make(map[uint64]struct{}, len(r.Generations))
-	for _, g := range r.Generations {
-		if err := validateGeneration(r.Tenant, g, r.Speaker); err != nil {
-			return nil, err
-		}
-		if _, dup := seen[g]; !dup {
-			seen[g] = struct{}{}
-			gens = append(gens, g)
-		}
+	gens, err := distinctGenerations(r.Tenant, r.Generations, r.Speaker)
+	if err != nil {
+		return nil, err
 	}
 	var resp *api.FenceGenerationsResponse
-	err := s.mgmtOperationWithContext(ctx, func() error {
+	err = s.mgmtOperationWithContext(ctx, func() error {
 		idx := s.generations
 		if err := idx.enabled(); err != nil {
 			return err
