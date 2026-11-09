@@ -77,6 +77,46 @@ listed twice is fenced and reported once; `results` has one
 mention, each with the same status a single fence returns and its own
 `newly_fenced`.
 
+## DeleteGenerations
+
+`DeleteGenerations(tenant, generations, speaker)` deletes every current path
+of up to 1024 fenced generations of one tenant. It is the batch form of a
+tagged `DeletePath` of each of their UUIDs.
+
+- The checks of `FenceGenerations` apply, and a request that fails them
+  changes nothing: no generation, more than 1024 entries (repeats count, so
+  1,031 entries with 1,024 distinct ones are refused), a generation 0, no
+  tenant (`INVALID_ARGUMENT`), another speaker or the fence off
+  (`FAILED_PRECONDITION`).
+- Only fenced generations qualify. A generation that is not fenced is
+  reported with `refused` set and its UUIDs `REFUSED`; it is left as it is,
+  and the other generations of the call proceed.
+- A path is withdrawn only while one of the listed generations owns it. A
+  path another write took over, from an older or a newer generation or an
+  untagged write, is kept and reported `REPLACED`, also when it is taken over
+  while the call runs.
+- `results` has one entry per distinct generation, in the order of first
+  mention: the outcome of each UUID the generation was given (`DELETED`,
+  `ALREADY_ABSENT` when the RIB no longer held it, `ALREADY_DELETED`,
+  `REPLACED`, `REFUSED`) and its status, taken after every delete.
+- It is idempotent: a repeat reports `ALREADY_DELETED` and changes nothing.
+
+The work runs in management-loop steps of at most 2048 withdrawals, each
+with one propagation, so a large batch does not hold the loop: other
+operations run between two steps, and each step rechecks the owner of the
+paths it withdraws. `steps` says how many it took. When the call fails
+halfway, because its context ended or the speaker stopped, the paths
+deleted so far stay deleted and repeating the call finishes the rest.
+
+## Proving a batch absent
+
+The statuses `DeleteGenerations` returns are taken in its last step, after
+every delete, so they already say for each generation that it owns no
+current path (`current_paths` 0, no path `present`). `GetGenerations` reads
+the same statuses for up to 1024 generations in one step, for a later
+check. `LookupDestinations` of the route keys, up to 10000 per call, shows
+what the RIB holds there now, local and learned, and who owns it.
+
 ## Reading back
 
 - `GetGeneration(tenant, generation)` returns the state (`UNKNOWN`, `LIVE`,
