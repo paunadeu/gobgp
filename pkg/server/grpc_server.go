@@ -637,6 +637,10 @@ func (s *server) DisableMrt(ctx context.Context, r *api.DisableMrtRequest) (*api
 	return &api.DisableMrtResponse{}, s.bgpServer.DisableMrt(ctx, r)
 }
 
+func (s *server) LookupDestinations(ctx context.Context, r *api.LookupDestinationsRequest) (*api.LookupDestinationsResponse, error) {
+	return s.bgpServer.LookupDestinations(ctx, r)
+}
+
 func (s *server) AddPathStream(stream api.GoBgpService_AddPathStreamServer) error {
 	for {
 		arg, err := stream.Recv()

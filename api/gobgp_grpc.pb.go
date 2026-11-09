@@ -64,6 +64,7 @@ const (
 	GoBgpService_ListPath_FullMethodName               = "/api.GoBgpService/ListPath"
 	GoBgpService_AddPathStream_FullMethodName          = "/api.GoBgpService/AddPathStream"
 	GoBgpService_GetTable_FullMethodName               = "/api.GoBgpService/GetTable"
+	GoBgpService_LookupDestinations_FullMethodName     = "/api.GoBgpService/LookupDestinations"
 	GoBgpService_AddVrf_FullMethodName                 = "/api.GoBgpService/AddVrf"
 	GoBgpService_DeleteVrf_FullMethodName              = "/api.GoBgpService/DeleteVrf"
 	GoBgpService_ListVrf_FullMethodName                = "/api.GoBgpService/ListVrf"
@@ -131,6 +132,7 @@ type GoBgpServiceClient interface {
 	ListPath(ctx context.Context, in *ListPathRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListPathResponse], error)
 	AddPathStream(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[AddPathStreamRequest, AddPathStreamResponse], error)
 	GetTable(ctx context.Context, in *GetTableRequest, opts ...grpc.CallOption) (*GetTableResponse, error)
+	LookupDestinations(ctx context.Context, in *LookupDestinationsRequest, opts ...grpc.CallOption) (*LookupDestinationsResponse, error)
 	AddVrf(ctx context.Context, in *AddVrfRequest, opts ...grpc.CallOption) (*AddVrfResponse, error)
 	DeleteVrf(ctx context.Context, in *DeleteVrfRequest, opts ...grpc.CallOption) (*DeleteVrfResponse, error)
 	ListVrf(ctx context.Context, in *ListVrfRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListVrfResponse], error)
@@ -458,6 +460,16 @@ func (c *goBgpServiceClient) GetTable(ctx context.Context, in *GetTableRequest, 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetTableResponse)
 	err := c.cc.Invoke(ctx, GoBgpService_GetTable_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *goBgpServiceClient) LookupDestinations(ctx context.Context, in *LookupDestinationsRequest, opts ...grpc.CallOption) (*LookupDestinationsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LookupDestinationsResponse)
+	err := c.cc.Invoke(ctx, GoBgpService_LookupDestinations_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -925,6 +937,7 @@ type GoBgpServiceServer interface {
 	ListPath(*ListPathRequest, grpc.ServerStreamingServer[ListPathResponse]) error
 	AddPathStream(grpc.ClientStreamingServer[AddPathStreamRequest, AddPathStreamResponse]) error
 	GetTable(context.Context, *GetTableRequest) (*GetTableResponse, error)
+	LookupDestinations(context.Context, *LookupDestinationsRequest) (*LookupDestinationsResponse, error)
 	AddVrf(context.Context, *AddVrfRequest) (*AddVrfResponse, error)
 	DeleteVrf(context.Context, *DeleteVrfRequest) (*DeleteVrfResponse, error)
 	ListVrf(*ListVrfRequest, grpc.ServerStreamingServer[ListVrfResponse]) error
@@ -1041,6 +1054,9 @@ func (UnimplementedGoBgpServiceServer) AddPathStream(grpc.ClientStreamingServer[
 }
 func (UnimplementedGoBgpServiceServer) GetTable(context.Context, *GetTableRequest) (*GetTableResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetTable not implemented")
+}
+func (UnimplementedGoBgpServiceServer) LookupDestinations(context.Context, *LookupDestinationsRequest) (*LookupDestinationsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method LookupDestinations not implemented")
 }
 func (UnimplementedGoBgpServiceServer) AddVrf(context.Context, *AddVrfRequest) (*AddVrfResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AddVrf not implemented")
@@ -1550,6 +1566,24 @@ func _GoBgpService_GetTable_Handler(srv interface{}, ctx context.Context, dec fu
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(GoBgpServiceServer).GetTable(ctx, req.(*GetTableRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GoBgpService_LookupDestinations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LookupDestinationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GoBgpServiceServer).LookupDestinations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GoBgpService_LookupDestinations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GoBgpServiceServer).LookupDestinations(ctx, req.(*LookupDestinationsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2199,6 +2233,10 @@ var GoBgpService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetTable",
 			Handler:    _GoBgpService_GetTable_Handler,
+		},
+		{
+			MethodName: "LookupDestinations",
+			Handler:    _GoBgpService_LookupDestinations_Handler,
 		},
 		{
 			MethodName: "AddVrf",

@@ -64,6 +64,7 @@ service GoBgpService {
   rpc AddPathStream(stream AddPathStreamRequest) returns (AddPathStreamResponse);
 
   rpc GetTable(GetTableRequest) returns (GetTableResponse);
+  rpc LookupDestinations(LookupDestinationsRequest) returns (LookupDestinationsResponse);
 
   rpc AddVrf(AddVrfRequest) returns (AddVrfResponse);
   rpc DeleteVrf(DeleteVrfRequest) returns (DeleteVrfResponse);
@@ -359,6 +360,33 @@ message ListPathRequest {
 
 message ListPathResponse {
   Destination destination = 1;
+}
+
+// DestinationKey names one destination of a table.
+message DestinationKey {
+  Family family = 1;
+  NLRI nlri = 2;
+}
+
+// LookupDestinations reads destinations of the global table by their exact
+// key, for every family, in one step of the management loop.
+message LookupDestinationsRequest {
+  // Only TABLE_TYPE_GLOBAL.
+  TableType table_type = 1;
+  // At most 10000.
+  repeated DestinationKey keys = 2;
+}
+
+message DestinationLookup {
+  DestinationKey key = 1;
+  // Every path the table holds for the destination, local and learned; none
+  // when it holds no such destination.
+  repeated Path paths = 2;
+}
+
+message LookupDestinationsResponse {
+  // One per key, in the order of the request.
+  repeated DestinationLookup destinations = 1;
 }
 
 message AddPathStreamRequest {
