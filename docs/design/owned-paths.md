@@ -115,9 +115,9 @@ a delete-all of another family no longer reach other paths.
 **API.** No new message. `apiutil.Path.UUID`; CLI `gobgp global rib del uuid
 <uuid>`.
 
-**Measured** on gates01, 1M local paths: delete by UUID 10.8 to 11.3 us
-against 881 ms on master; 100 deletes by UUID took 0.8 ms where one walk of
-the table took 269 ms. Regression tests: each bug above, a stream message
+**Measured** on gates01, 1M local paths: delete by UUID 12.2 to 15.3 us
+against 881 ms on master; 100 deletes by UUID took 0.94 ms where one walk of
+the table took 285 ms. Regression tests: each bug above, a stream message
 that withdraws a `no_implicit_withdraw` path and adds its replacement, the
 path identifier, a label change, two BGP-LS nodes that print alike, and VPN
 FlowSpec in both families outliving its VRF.
@@ -157,7 +157,7 @@ FlowSpec in both families outliving its VRF.
 nlri <nlri>`, the NLRI in the syntax of `rib add`.
 
 **Measured** on gates01, table of 200k paths: 1,000 NLRI keys in one ListPath
-about 3 ms, against 469 to 513 ms to list the table.
+2.7 to 3.2 ms, against 469 to 513 ms to list the table.
 
 ---
 
