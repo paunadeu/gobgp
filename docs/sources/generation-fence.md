@@ -85,9 +85,62 @@ server, a random ID taken at `StartBgp` and returned by `GetGeneration`,
 restart either, so a generation a new incarnation does not know owns nothing
 in its table. Fences survive the restart.
 
-Every answer of `GetGeneration`, `FenceGeneration` and `AddPath` carries the
-configured `instance_id`, empty when there is none, so a client can check
-which server answered.
+Every answer of `GetGeneration`, `FenceGeneration`, `AddPath` and the batch
+calls below carries the configured `instance_id`, empty when there is none,
+so a client can check which server answered.
+
+## Batches
+
+`FenceGenerations`, `GetGenerations` and `DeleteGenerations` take a
+namespace and 1 to 1024 generations; repeats are counted toward the limit,
+so 1,031 entries with 1,024 distinct generations are refused. A request with
+no generation, too many, or a generation 0 is refused with
+`INVALID_ARGUMENT`, and one naming another instance ID, or sent while the
+fence is off, with `FAILED_PRECONDITION`; either way nothing changes. A
+generation listed twice is handled and reported once, and the results follow
+the order of first mention.
+
+### FenceGenerations
+
+`FenceGenerations` fences the generations in one management-loop step and
+one synced write of the store. For each generation it means what
+`FenceGeneration` means, and it is atomic: when it fails, it fenced none of
+them. Each result is the answer `FenceGeneration` would give.
+
+### GetGenerations
+
+`GetGenerations` reads the status of each generation in one step, as
+`GetGeneration` does.
+
+### DeleteGenerations
+
+`DeleteGenerations` withdraws every current path of the listed fenced
+generations. It is the batch form of a tagged `DeletePath` of each of their
+uuids.
+
+- Only fenced generations qualify. A generation that is not fenced is
+  reported with `refused` set and its uuids `REFUSED`; it is left alone, and
+  the other generations of the call proceed.
+- A path is withdrawn only while one of the listed generations owns it. A
+  path another write took over, from an older or a newer generation or an
+  untagged write, is kept and reported `REPLACED`, also when it is taken over
+  while the call runs.
+- Each result lists the outcome of every uuid the generation was given
+  (`DELETED`, `ALREADY_ABSENT` when the table no longer held it,
+  `ALREADY_DELETED`, `REPLACED`, `REFUSED`) and the generation's status,
+  taken after every delete of the call.
+- It is idempotent: a repeat reports `ALREADY_DELETED` and changes nothing.
+
+The work runs in management-loop steps of at most 2048 withdrawals, each
+with one propagation, so a large batch does not hold the loop: other
+operations run between two steps, and each step rechecks the owner of the
+paths it withdraws. `steps` says how many steps the call took. When the call
+fails halfway, because its context ended or the server stopped, the paths
+deleted so far stay deleted, and repeating the call finishes the rest.
+
+The statuses `DeleteGenerations` returns are taken after every delete, so
+they show for each generation that it owns no current path (`current_paths`
+0, no path `present`). `GetGenerations` reads them again later.
 
 ## Untagged writes
 

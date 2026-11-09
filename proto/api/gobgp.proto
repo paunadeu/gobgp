@@ -64,6 +64,9 @@ service GoBgpService {
   rpc AddPathStream(stream AddPathStreamRequest) returns (AddPathStreamResponse);
   rpc FenceGeneration(FenceGenerationRequest) returns (FenceGenerationResponse);
   rpc GetGeneration(GetGenerationRequest) returns (GetGenerationResponse);
+  rpc FenceGenerations(FenceGenerationsRequest) returns (FenceGenerationsResponse);
+  rpc GetGenerations(GetGenerationsRequest) returns (GetGenerationsResponse);
+  rpc DeleteGenerations(DeleteGenerationsRequest) returns (DeleteGenerationsResponse);
 
   rpc GetTable(GetTableRequest) returns (GetTableResponse);
 
@@ -1601,6 +1604,11 @@ enum GenerationDeleteOutcome {
   // Another write had taken the route key. Nothing changed, and the path
   // there now is left alone.
   GENERATION_DELETE_OUTCOME_REPLACED = 3;
+  // DeleteGenerations only: the index named the path current, but the global
+  // table held no local path at its route key. It is marked deleted.
+  GENERATION_DELETE_OUTCOME_ALREADY_ABSENT = 4;
+  // DeleteGenerations only: the generation is not fenced. Nothing changed.
+  GENERATION_DELETE_OUTCOME_REFUSED = 5;
 }
 
 enum GenerationCommandKind {
@@ -1692,4 +1700,66 @@ message GetGenerationRequest {
 
 message GetGenerationResponse {
   GenerationStatus status = 1;
+}
+
+// FenceGenerations fences up to 1024 generations of a namespace in one step
+// of the management loop and one synced write. For each of them it means what
+// FenceGeneration means, and when it fails it has fenced none.
+message FenceGenerationsRequest {
+  string namespace = 1;
+  // 1 to 1024 entries, repeats counted, none 0. A generation listed twice is
+  // fenced and reported once.
+  repeated uint64 generations = 2;
+  string instance_id = 3;
+}
+
+message FenceGenerationsResponse {
+  // One per distinct generation, in the order of first mention.
+  repeated FenceGenerationResponse results = 1;
+}
+
+// GetGenerations reads the status of up to 1024 generations in one step.
+message GetGenerationsRequest {
+  string namespace = 1;
+  repeated uint64 generations = 2;
+}
+
+message GetGenerationsResponse {
+  // One per distinct generation, in the order of first mention.
+  repeated GenerationStatus statuses = 1;
+}
+
+// DeleteGenerations withdraws every current path of up to 1024 fenced
+// generations of a namespace. A generation that is not fenced is reported
+// refused and left alone; the others proceed. A path is withdrawn only while
+// one of the listed generations owns it, so a path another write took over
+// is kept.
+message DeleteGenerationsRequest {
+  string namespace = 1;
+  // 1 to 1024 entries, repeats counted, none 0. A generation listed twice is
+  // handled and reported once.
+  repeated uint64 generations = 2;
+  string instance_id = 3;
+}
+
+message GenerationPathOutcome {
+  bytes uuid = 1;
+  GenerationDeleteOutcome outcome = 2;
+}
+
+message GenerationDeleteResult {
+  uint64 generation = 1;
+  // The generation is not fenced; its paths were left alone.
+  bool refused = 2;
+  // One per uuid the generation was given in this incarnation.
+  repeated GenerationPathOutcome outcomes = 3;
+  // Taken after every delete of the call.
+  GenerationStatus status = 4;
+}
+
+message DeleteGenerationsResponse {
+  // One per distinct generation, in the order of first mention.
+  repeated GenerationDeleteResult results = 1;
+  // The management-loop steps the call took.
+  uint32 steps = 2;
 }

@@ -158,3 +158,40 @@ func TestUnknownFormatIsRefused(t *testing.T) {
 	_, err = os.Stat(filepath.Join(dir, FileName))
 	require.NoError(t, err)
 }
+
+// FenceMany writes every tombstone or none, keeps those already there, and
+// survives a reopen.
+func TestFenceMany(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir, 2)
+	require.NoError(t, err)
+	first, newly, err := s.Fence("t", 2, "a", time.Unix(100, 0))
+	require.NoError(t, err)
+	require.True(t, newly)
+	ts, fresh, err := s.FenceMany("t", []uint64{1, 2, 3}, "b", time.Unix(200, 0))
+	require.NoError(t, err)
+	require.Equal(t, []bool{true, false, true}, fresh)
+	require.Equal(t, first, ts[1], "an existing tombstone is kept")
+	require.Equal(t, time.Unix(200, 0).UTC(), ts[0].FencedAt)
+
+	_, _, err = s.FenceMany("t", []uint64{4, 4}, "", time.Now())
+	require.Error(t, err, "a generation listed twice")
+	_, _, err = s.FenceMany("t", []uint64{5, 0}, "", time.Now())
+	require.Error(t, err)
+	_, fenced, err := s.Lookup("t", 5)
+	require.NoError(t, err)
+	require.False(t, fenced, "a refused batch fences nothing")
+	require.NoError(t, s.Close())
+
+	s, err = Open(dir, 2)
+	require.NoError(t, err)
+	defer s.Close()
+	for _, g := range []uint64{1, 2, 3} {
+		_, fenced, err := s.Lookup("t", g)
+		require.NoError(t, err)
+		require.True(t, fenced, "generation %d", g)
+	}
+	n, err := s.Count()
+	require.NoError(t, err)
+	require.Equal(t, 3, n)
+}

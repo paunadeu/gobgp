@@ -307,6 +307,58 @@ func (s *Store) Fence(namespace string, generation uint64, instanceID string, no
 	return t, newly, nil
 }
 
+// FenceMany fences several generations of a namespace in one transaction,
+// synced once before it returns: either every tombstone is written or none
+// is. It is idempotent per generation, like Fence. The generations must be
+// distinct; the results are in their order.
+func (s *Store) FenceMany(namespace string, generations []uint64, instanceID string, now time.Time) ([]Tombstone, []bool, error) {
+	seen := make(map[uint64]struct{}, len(generations))
+	for _, g := range generations {
+		if err := validate(namespace, g, instanceID); err != nil {
+			return nil, nil, err
+		}
+		if _, dup := seen[g]; dup {
+			return nil, nil, fmt.Errorf("generation %d is listed twice", g)
+		}
+		seen[g] = struct{}{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db == nil {
+		return nil, nil, errors.New("generation fence store is closed")
+	}
+	ts := make([]Tombstone, len(generations))
+	newly := make([]bool, len(generations))
+	fresh := Tombstone{FencedAt: now.UTC(), InstanceID: instanceID}
+	// bbolt syncs the file before Update returns.
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketTombstones)
+		for i, g := range generations {
+			kb := encodeKey(namespace, g)
+			if v := b.Get(kb); v != nil {
+				old, err := decodeValue(v)
+				if err != nil {
+					return err
+				}
+				ts[i] = old
+				continue
+			}
+			if err := b.Put(kb, encodeValue(fresh)); err != nil {
+				return err
+			}
+			ts[i], newly[i] = fresh, true
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("write tombstones: %w", err)
+	}
+	for i, g := range generations {
+		s.remember(&cacheEntry{key: key{namespace, g}, fenced: true, tombstone: ts[i]})
+	}
+	return ts, newly, nil
+}
+
 // CacheLen is the number of cached lookups.
 func (s *Store) CacheLen() int {
 	s.mu.Lock()
