@@ -62,6 +62,8 @@ service GoBgpService {
   rpc DeletePath(DeletePathRequest) returns (DeletePathResponse);
   rpc ListPath(ListPathRequest) returns (stream ListPathResponse);
   rpc AddPathStream(stream AddPathStreamRequest) returns (AddPathStreamResponse);
+  rpc FenceGeneration(FenceGenerationRequest) returns (FenceGenerationResponse);
+  rpc GetGeneration(GetGenerationRequest) returns (GetGenerationResponse);
 
   rpc GetTable(GetTableRequest) returns (GetTableResponse);
 
@@ -307,10 +309,22 @@ message AddPathRequest {
   TableType table_type = 1;
   string vrf_id = 2;
   Path path = 3;
+  // Optional. Makes the request a command of a generation; see
+  // GenerationTag. A tagged path cannot be a withdrawal: delete it with
+  // DeletePath and its uuid.
+  GenerationTag generation_tag = 4;
 }
 
 message AddPathResponse {
   bytes uuid = 1;
+  // Set for a tagged request: the command ID already had a receipt, so
+  // nothing was applied and uuid is the one given the first time.
+  bool replayed = 2;
+  // Set for a tagged request: the server incarnation the uuid belongs to.
+  // See GenerationStatus.incarnation.
+  bytes incarnation = 3;
+  // The instance ID the server is configured with, empty when none is.
+  string instance_id = 4;
 }
 
 message DeletePathRequest {
@@ -319,9 +333,17 @@ message DeletePathRequest {
   Family family = 3;
   Path path = 4;
   bytes uuid = 5;
+  // Optional. A tagged delete names a uuid the same generation was given.
+  // It is accepted after the generation is fenced.
+  GenerationTag generation_tag = 6;
 }
 
-message DeletePathResponse {}
+message DeletePathResponse {
+  // Set for a tagged request.
+  GenerationDeleteOutcome outcome = 1;
+  // Set for a tagged request whose command ID already had a receipt.
+  bool replayed = 2;
+}
 
 // API representation of table.LookupPrefix
 message TableLookupPrefix {
@@ -365,6 +387,9 @@ message AddPathStreamRequest {
   TableType table_type = 1;
   string vrf_id = 2;
   repeated Path paths = 3;
+  // Optional. Each tagged message is one command of the generation. The
+  // server gives each path a uuid; GetGeneration lists them.
+  GenerationTag generation_tag = 4;
 }
 
 message AddPathStreamResponse {}
@@ -1526,4 +1551,145 @@ message TcpAoKeyState {
   bool receive_next = 4;
   uint64 packets_good = 5;
   uint64 packets_bad = 6;
+}
+
+// GenerationTag makes a path write one command of a generation. A writer
+// that replaces its routes in generations fences a generation it has
+// stopped (FenceGeneration); from then on the server refuses every command
+// of that generation, from any connection, however late it arrives.
+message GenerationTag {
+  // Optional, at most 256 bytes. Generations of different namespaces are
+  // independent.
+  string namespace = 1;
+  // Must not be 0.
+  uint64 generation = 2;
+  // 1 to 256 bytes, unique within the generation. A command whose ID already
+  // has a receipt is not applied again; its first result is returned. The
+  // same ID with another payload is refused with ALREADY_EXISTS.
+  string command_id = 3;
+  // Optional. When the server is configured with an instance ID, a command
+  // that names another one is refused with FAILED_PRECONDITION.
+  string instance_id = 4;
+}
+
+enum GenerationState {
+  GENERATION_STATE_UNSPECIFIED = 0;
+  // Not fenced, and this incarnation holds no receipt for it.
+  GENERATION_STATE_UNKNOWN = 1;
+  // Not fenced, and this incarnation holds receipts for it.
+  GENERATION_STATE_LIVE = 2;
+  // Fenced: every later command of the generation is refused.
+  GENERATION_STATE_FENCED = 3;
+}
+
+enum GenerationPathState {
+  GENERATION_PATH_STATE_UNSPECIFIED = 0;
+  // The path is the one this uuid names at its route key.
+  GENERATION_PATH_STATE_CURRENT = 1;
+  // Another write took the route key.
+  GENERATION_PATH_STATE_REPLACED = 2;
+  // Deleted, by uuid, by key, or by a delete of all local paths.
+  GENERATION_PATH_STATE_DELETED = 3;
+}
+
+enum GenerationDeleteOutcome {
+  GENERATION_DELETE_OUTCOME_UNSPECIFIED = 0;
+  // The path was current and is withdrawn now.
+  GENERATION_DELETE_OUTCOME_DELETED = 1;
+  // The path had been deleted before. Nothing changed.
+  GENERATION_DELETE_OUTCOME_ALREADY_DELETED = 2;
+  // Another write had taken the route key. Nothing changed, and the path
+  // there now is left alone.
+  GENERATION_DELETE_OUTCOME_REPLACED = 3;
+}
+
+enum GenerationCommandKind {
+  GENERATION_COMMAND_KIND_UNSPECIFIED = 0;
+  GENERATION_COMMAND_KIND_ADD_PATH = 1;
+  GENERATION_COMMAND_KIND_ADD_PATH_STREAM = 2;
+  GENERATION_COMMAND_KIND_DELETE_PATH = 3;
+}
+
+// GenerationReceipt records an applied command.
+message GenerationReceipt {
+  string command_id = 1;
+  string instance_id = 2;
+  GenerationCommandKind kind = 3;
+  google.protobuf.Timestamp applied_at = 4;
+  // The uuids the command gave, in the order of its paths; for a delete, the
+  // uuid it named.
+  repeated bytes uuids = 5;
+  // Set for a delete.
+  GenerationDeleteOutcome delete_outcome = 6;
+}
+
+// GenerationPath is a path a generation was given a uuid for.
+message GenerationPath {
+  bytes uuid = 1;
+  // The route key: family, NLRI, path identifier, and the VRF it was written
+  // to.
+  Family family = 2;
+  NLRI nlri = 3;
+  uint32 identifier = 4;
+  string vrf_id = 5;
+  string command_id = 6;
+  GenerationPathState state = 7;
+  // Set when the state is REPLACED by a tagged write.
+  bytes replaced_by_uuid = 8;
+  GenerationTag replaced_by = 9;
+  // The state is CURRENT and the global table holds a local path at the
+  // route key, read from the table.
+  bool present = 10;
+  // The path as it was written.
+  Path path = 11;
+  google.protobuf.Timestamp added_at = 12;
+  google.protobuf.Timestamp ended_at = 13;
+}
+
+message GenerationStatus {
+  string namespace = 1;
+  uint64 generation = 2;
+  GenerationState state = 3;
+  google.protobuf.Timestamp fenced_at = 4;
+  // Receipts and uuids are kept in memory and belong to one incarnation of
+  // the server, a random ID taken at StartBgp. Local paths do not survive a
+  // restart either, so a generation a new incarnation does not know owns
+  // nothing in its table. Fences are on disk and survive it.
+  bytes incarnation = 5;
+  repeated GenerationReceipt receipts = 6;
+  repeated GenerationPath paths = 7;
+  // Tagged commands refused because the generation was fenced.
+  uint64 refused_after_fence = 8;
+  // Paths whose state is CURRENT.
+  uint64 current_paths = 9;
+  // The instance ID the server is configured with, empty when none is.
+  string instance_id = 10;
+}
+
+message FenceGenerationRequest {
+  string namespace = 1;
+  uint64 generation = 2;
+  // Optional; recorded with the fence and checked like
+  // GenerationTag.instance_id.
+  string instance_id = 3;
+}
+
+// The answer is sent once the fence is on disk. Every command of the
+// generation the server ran before the fence is in status; every one after
+// it is refused, on any connection. Fencing a fenced generation is not an
+// error.
+message FenceGenerationResponse {
+  // Taken in the same step as the fence.
+  GenerationStatus status = 1;
+  // False when the generation was fenced before.
+  bool newly_fenced = 2;
+}
+
+message GetGenerationRequest {
+  string namespace = 1;
+  uint64 generation = 2;
+}
+
+message GetGenerationResponse {
+  GenerationStatus status = 1;
 }
