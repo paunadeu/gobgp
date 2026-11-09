@@ -1,6 +1,6 @@
 # Owned paths: design of a set of generic API primitives
 
-Status: revision 3, for review before any code of B, C, D and F. A and E are
+Status: revision 4, for review before any code of B, C, D and F. A and E are
 implemented on their own branches (see below). Base: osrg/gobgp master
 `42c7736d` ("server: do not apply a path request whose gRPC context has
 ended", #3912).
@@ -96,6 +96,7 @@ paths of one stream message.
 | Event | Effect on the index |
 | --- | --- |
 | AddPath | entries whose installed path left the slot end; an entry is added for the installed path, none when nothing was installed (a withdrawal, or a path the import policy rejected) |
+| any write list | paths of slots without an entry go to the table in runs, as one list; a path of a slot with an entry, or whose installed path AddPath captures, is propagated on its own and its slot read after it |
 | AddPathStream, zebra routes, DeletePath by key | entries whose installed path left the slot end, after each path |
 | DeletePath of all local paths of a family | the entries of that family end (not the whole map) |
 | DeleteVrf | the entries whose installed path DeleteVrf withdrew end; VPN FlowSpec paths outlive their VRF and keep their UUIDs |
@@ -115,9 +116,23 @@ a delete-all of another family no longer reach other paths.
 **API.** No new message. `apiutil.Path.UUID`; CLI `gobgp global rib del uuid
 <uuid>`.
 
-**Measured** on gates01, 1M local paths: delete by UUID 12.2 to 15.3 us
-against 881 ms on master; 100 deletes by UUID took 0.94 ms where one walk of
-the table took 285 ms. Regression tests: each bug above, a stream message
+**Measured** on gates01, 1M local paths: delete by UUID 13.3 to 16.0 us
+against 881 ms on master; 100 deletes by UUID took 0.77 ms where one walk of
+the table took 308 ms. The entries of a slot and the paths read back are
+kept in sets, so reconciling a slot is linear in its size, and a delete by
+UUID withdraws the slot as one list and reconciles once. Paths of slots
+without an entry still go to the table in runs, as one list.
+
+| Delete by one UUID, slot of k coexisting paths | k = 1 | k = 10 | k = 100 | k = 1,000 |
+| --- | --- | --- | --- | --- |
+| time | 9.1 to 10.0 us | 25 to 32 us | 0.20 to 0.23 ms | 7.7 to 7.9 ms |
+
+Past 100 the table's own withdrawal, which scans the slot for each withdrawn
+path, dominates.
+
+| AddPathStream, 10,000 new paths, table of 1M local paths | no index | 1 entry | 1M entries |
+| --- | --- | --- | --- |
+| per path | 1.78 to 1.89 us | 1.83 to 1.93 us | 1.64 to 2.07 us | Regression tests: each bug above, a stream message
 that withdraws a `no_implicit_withdraw` path and adds its replacement, the
 path identifier, a label change, two BGP-LS nodes that print alike, and VPN
 FlowSpec in both families outliving its VRF.
@@ -157,7 +172,7 @@ FlowSpec in both families outliving its VRF.
 nlri <nlri>`, the NLRI in the syntax of `rib add`.
 
 **Measured** on gates01, table of 200k paths: 1,000 NLRI keys in one ListPath
-2.7 to 3.2 ms, against 469 to 513 ms to list the table.
+2.7 to 5.1 ms, against 469 to 513 ms to list the table.
 
 ---
 
@@ -376,14 +391,19 @@ unknown, empty and populated owners; limits and repeats.
   slot, and that its owner is still the listed owner; otherwise the path is
   reported `REPLACED` and left alone. With no owned coexistence (C1) the
   withdrawal removes exactly that path.
-- A call withdraws at most `max_paths` paths (default and maximum 100,000)
-  and stops at the end of the step that reaches it. The answer is compact
-  and bounded: per owner, the counts of `DELETED`, `ALREADY_ABSENT` (the
-  index named it but the table no longer held it) and `REPLACED`, and the
-  number of paths it still owns; `remaining`, the candidates not reached; and
-  at most the first 1,000 UUIDs of each outcome, with a flag when more were
-  left out. The client repeats the call until `remaining` is 0 and the owners
-  own nothing.
+- A call withdraws at most `max_paths` paths (default and maximum 100,000).
+  Each step withdraws at most the smaller of 2,048 and the allowance left,
+  so the last step is clipped and the call never exceeds `max_paths`.
+- The answer is compact and bounded as a whole: per owner, the counts of
+  `DELETED`, `ALREADY_ABSENT` (the index named it but the table no longer
+  held it) and `REPLACED`, and the number of paths it still owns;
+  `remaining`, the candidates not reached; and sample UUIDs, at most 1,000
+  for the whole call across owners and outcomes, filled in the order the
+  paths were handled, with `samples_truncated` set when more were left out.
+  The answer never exceeds 1 MiB: with 1,024 owners of 256 bytes, the
+  per-owner counts take at most about 300 KiB and the samples 16 KiB. The
+  client repeats the call until `remaining` is 0 and the owners own nothing,
+  and reads UUIDs it needs from the owner listing.
 - A call that fails half way leaves what it deleted deleted. It is
   idempotent.
 - With D, `only_closed` reports an owner that is not closed as `refused`,
@@ -441,10 +461,16 @@ together with the local paths, and a late write naming a closed owner after a
 restart is accepted. With `--owner-close-dir` (and the `ServerOption`
 `OwnerCloseDir`), closes are durable:
 
-- **File.** `closed-owners.log`: a header (magic, format version, CRC32C),
-  then one frame per CloseOwners call. A frame is length, record count, the
-  records (owner length, owner, close time) and a CRC32C of all of it. The
-  frame of one call is written as one unit, so a batch is never half on
+- **File.** `closed-owners.log`: a file header (magic, format version,
+  CRC32C), then one frame per CloseOwners call. A frame is a fixed 16-byte
+  frame header, the body, and a body CRC:
+  - frame header: body length (4 bytes), sequence number (8 bytes, one more
+    than the previous frame's, starting at 1), and a CRC32C of those 12
+    bytes (4 bytes). The length is protected on its own, so a damaged length
+    is detected without trusting it to find the body.
+  - body: record count, then the records (owner length, owner, close time).
+  - body CRC: a CRC32C of the frame header and the body.
+  The frame of one call is written as one unit, so a batch is never half on
   disk after recovery.
 - **Creation.** A new file is written to a temporary name, its header synced,
   renamed into place, and the directory synced.
@@ -460,19 +486,26 @@ restart is accepted. With `--owner-close-dir` (and the `ServerOption`
   them with UNAVAILABLE, rather than continue on a file whose state is
   unknown. Unowned writes are not affected. The restart runs the recovery
   below, which never drops an acknowledged close.
-- **Startup.** The file is read frame by frame. A frame is complete when the
-  file holds as many bytes as its length field declares. Recovery is
-  conservative:
-  - Only a torn tail is recoverable: the file ends inside the length field
-    of the last frame, or before the end the last frame's length declares,
-    with that length within the maximum frame size. Such a frame was never
-    synced, so never acknowledged. It is truncated and the file synced
-    before any append.
-  - A complete frame whose CRC fails, the last one included, fails StartBgp.
-    So do a bad header, a length beyond the maximum frame size, and trailing
-    bytes that are not a frame. A CRC failure on a complete frame cannot be
-    told apart from damage to an acknowledged close, so it is never
-    repaired silently; the operator decides.
+- **Startup.** The file is read frame by frame. Recovery is conservative and
+  decides only on bytes that are themselves protected:
+  - A torn tail is recoverable in exactly two shapes, both at the end of
+    the file: fewer than 16 bytes after the last good frame (the frame
+    header itself is incomplete), or a frame header whose CRC is valid,
+    whose sequence number follows the previous one, whose length is within
+    the maximum frame size, and whose body ends beyond the end of the file.
+    Such a frame was never fully written, so never synced and never
+    acknowledged. It is truncated and the file synced before any append.
+  - Everything else fails StartBgp: a complete frame header whose CRC fails
+    (a damaged length or sequence number is caught here, before the length
+    is used), a sequence number out of order, a length beyond the maximum, a
+    complete frame whose body CRC fails (the last one included), a bad file
+    header, and trailing bytes that are not a frame. None of these can be
+    told apart from damage to an acknowledged close, so none is repaired
+    silently; the operator decides.
+  - The recovery relies on the file system keeping bytes that `fsync`
+    reported synced. A file system that truncates a synced file could
+    present an acknowledged last frame as a torn tail; that is outside what
+    a log can detect without a second copy.
 - **Lifecycle of the registry.** Closes are permanent for the life of the
   directory. The registry has a count cap, `--owner-close-max` (default
   1,000,000), and a byte budget, `--owner-close-max-bytes` (default 128 MiB,
@@ -513,9 +546,12 @@ counted by the close, and ListPath with the owner filter returns exactly
 them (several rounds, `-race -count=N`). Later writes refused, streams
 included; replays answered from the receipt; the store: creation, restart
 with the set loaded before the first write, a torn tail truncated (cut inside
-the length field and inside the body), a frame corrupted after a successful
-acknowledgment failing StartBgp whether it is the last frame or not, a bad
-header and an oversized length failing StartBgp, a short write and an
+the frame header and inside the body), a frame corrupted after a successful
+acknowledgment failing StartBgp whether it is the last frame or not, the
+length field of an acknowledged frame changed to another permitted value
+beyond the end of the file failing StartBgp (its frame header CRC no longer
+matches), a sequence number gap, a bad file header and an oversized length
+failing StartBgp, a short write and an
 `fsync` error injected through a file interface stopping closes and owned
 writes until restart, the count cap and the byte budget, a second server on
 the same directory (`flock`).
@@ -622,11 +658,23 @@ follows.
 
 ## Open questions for review
 
-1. C2's bounded answer keeps the first 1,000 UUIDs of each outcome per owner;
-   a client that needs every UUID reads the owner listing instead. Is a
-   paginated answer worth its extra state?
-2. Whether `--owner-close-max-bytes` should count the measured map overhead
+1. Whether `--owner-close-max-bytes` should count the measured map overhead
    (70 to 120 bytes per owner) instead of the fixed 64 bytes.
+
+## Changes from revision 3
+
+- A: sets for a slot's entries and paths read back; a whole-slot delete
+  reconciles once; runs of unwatched paths go as one list; measured with
+  coexisting slots of 1 to 1,000 paths and with indexes of 0, 1 and 1M
+  entries.
+- D: every frame has its own header with the body length, a sequence number
+  and a CRC over both; recovery treats a frame as torn only when that header
+  is valid and in sequence, or incomplete, and fails startup on anything
+  else, including a length changed to another permitted value. A test
+  changes the length of an acknowledged frame.
+- C2: the last step is clipped to the `max_paths` allowance left; samples
+  are capped at 1,000 per call across owners and outcomes, and the answer at
+  1 MiB.
 
 ## Changes from revision 2
 
