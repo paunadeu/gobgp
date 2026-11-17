@@ -1536,6 +1536,9 @@ func (s *BgpServer) propagateUpdate(peer *peer, pathList []*table.Path) {
 			}
 
 			if dsts := rib.Update(path); len(dsts) > 0 {
+				if s.zclient != nil && !rs && !path.IsWithdraw {
+					path.OriginInfo().LocRIBUpdate.Store(time.Since(zebraEpoch).Nanoseconds())
+				}
 				// Report the path to the post-policy watchers only when it is
 				// not the one the table already held. An inbound soft reset
 				// replays the whole Adj-RIB-In, and a subscriber that got the
@@ -2887,6 +2890,13 @@ func (s *BgpServer) installPathList(vrfId string, pathList []*table.Path, captur
 			return nil, err
 		}
 	}
+	// API paths have no Adj-RIB-In owner to keep their path IDs, so the
+	// table releases the ID when they are withdrawn.
+	for _, path := range pathList {
+		if !path.IsWithdraw {
+			path.SetDropped(true)
+		}
+	}
 	if s.zclient != nil {
 		s.zclient.cacheLock.Lock()
 		s.zclient.nexthopCache.applyToNewPathList(pathList)
@@ -3166,17 +3176,6 @@ func (s *BgpServer) deletePathOutcome(ctx context.Context, req apiutil.DeletePat
 		}
 	}, true)
 	return outcome, replayed, err
-}
-
-func (s *BgpServer) updatePath(vrfId string, pathList []*table.Path) error {
-	err := s.mgmtOperation(func() error {
-		if err := s.fixupApiPath(vrfId, pathList); err != nil {
-			return err
-		}
-		s.propagateUpdate(nil, pathList)
-		return nil
-	}, true)
-	return err
 }
 
 // locRibFamilies lists every address family gobgp can handle, in AFI/SAFI

@@ -630,7 +630,7 @@ func TestUUIDSurvivesZebraNexthopRefresh(t *testing.T) {
 	// The metric of the next hop changes.
 	z.nexthopCache[nexthop] = 100
 	before := installed()
-	z.updatePathByNexthopCache(before)
+	z.updatePathByNexthopCache(before, time.Now())
 	after := installed()
 	require.Len(t, after, 1)
 	require.NotSame(t, before[0], after[0], "the table holds a new copy")
@@ -641,7 +641,7 @@ func TestUUIDSurvivesZebraNexthopRefresh(t *testing.T) {
 
 	// The next hop becomes unreachable.
 	z.nexthopCache[nexthop] = math.MaxUint32
-	z.updatePathByNexthopCache(installed())
+	z.updatePathByNexthopCache(installed(), time.Now())
 	u, _, invalid = reported()
 	require.Equal(t, id[:], u)
 	require.True(t, invalid)
@@ -687,7 +687,7 @@ func TestUUIDFollowsPolicyCopy(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 7, med, "the table holds the policy's copy")
 	z := &zebraClient{server: s, nexthopCache: nexthopStateCache{netip.MustParseAddr("10.0.0.1"): 50}}
-	z.updatePathByNexthopCache([]*table.Path{held})
+	z.updatePathByNexthopCache([]*table.Path{held}, time.Now())
 	require.Equal(t, 1, s.pathIndex.len())
 	require.NoError(t, deleteUUID(s, id))
 	require.Zero(t, s.pathIndex.len())
