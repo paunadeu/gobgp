@@ -183,7 +183,7 @@ func (s *BgpServer) deleteGenerationsStep(p *deletePlan, now time.Time) {
 		i := p.pendingG[j]
 		switch gp.state {
 		case api.GenerationPathState_GENERATION_PATH_STATE_CURRENT:
-			if rp := s.localPathAt(gp.path, gp.key.id); rp != nil {
+			if rp := s.installedVersion(gp.path); rp != nil {
 				withdraws = append(withdraws, rp.Clone(true))
 				p.outcome[i][gp] = api.GenerationDeleteOutcome_GENERATION_DELETE_OUTCOME_DELETED
 			} else {

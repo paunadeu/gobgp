@@ -267,7 +267,7 @@ func TestDeleteGenerationsAlreadyAbsent(t *testing.T) {
 	ids := addGenerationPaths(t, c, 20, 2)
 	require.NoError(t, h.s.mgmtOperation(func() error {
 		gp := h.s.generations.byUUID[ids[0]]
-		h.s.propagateUpdate(nil, []*table.Path{h.s.localPathAt(gp.path, gp.key.id).Clone(true)})
+		h.s.propagateUpdate(nil, []*table.Path{h.s.installedVersion(gp.path).Clone(true)})
 		return nil
 	}, false))
 	fence(t, c, "t", 20)

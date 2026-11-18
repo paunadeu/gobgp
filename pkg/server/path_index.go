@@ -17,7 +17,8 @@ package server
 
 import (
 	"net/netip"
-	"slices"
+	"sync"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 
@@ -50,10 +51,11 @@ func localPathKeyOf(p *table.Path) localPathKey {
 	return k
 }
 
-// pathIndexEntry is the UUID AddPath gave one local path. The entry names
-// the path AddPath wrote. The table may hold a copy of it instead, made by
-// an import policy or by a zebra next-hop refresh; every copy has the
-// written path as its root (table.Path.Root), so the entry follows them.
+// pathIndexEntry is the UUID AddPath gave one path. The entry names the
+// path AddPath wrote, local or carrying a peer identity. The table may hold a
+// copy of it instead, made by an import policy or by a zebra next-hop
+// refresh; every copy has the written path as its root (table.Path.Root), so
+// the entry follows them. Its fields never change after add.
 type pathIndexEntry struct {
 	id      uuid.UUID
 	key     localPathKey
@@ -63,39 +65,52 @@ type pathIndexEntry struct {
 
 // pathIndex maps the UUIDs AddPath gives to the paths the global table holds
 // for them, so that DeletePath by UUID reads one destination instead of
-// walking the table. It is touched only from management operations, which
-// run one at a time with shared.mu held, so it has no lock of its own.
+// walking the table.
 //
-// An entry holds while its slot holds a path whose root is the written
-// path. Every write the API or zebra makes to a slot that has an entry is
-// applied one path at a time, and after each the slot is read again: an
-// entry whose path is no longer there ends. So an entry ends when another
-// write replaces its path, when a withdrawal removes it, and also between
-// two writes of one stream message. A refresh that reinstalls a copy of
-// the path, such as a zebra next-hop change, keeps it. A delete of all
-// local paths of a family ends the entries of that family, and DeleteVrf
-// the entries whose path it withdrew. Some withdrawals happen inside the
-// table without a write of the API, such as an EVPN MAC move caused by a
-// received route; an entry left by one of them stays until its slot is next
-// written or read, and a delete by its UUID finds its path gone, deletes
-// nothing, and ends it.
+// An entry holds while the global table holds a version of its written
+// path. It ends when a write or a withdrawal removes that version: another
+// path that replaces it, a withdrawal, an import policy rejecting it, or an
+// EVPN MAC move caused by a received route. propagateUpdate retires the
+// entry of every path the global table removes in favor of a path with
+// another root, and propagateLocal also reads a watched slot again after
+// each write. A refresh that reinstalls a copy of the path, such as a zebra
+// next-hop change, keeps it. A delete of all local paths of a family ends
+// the entries of that family, and DeleteVrf the entries whose path it
+// withdrew.
+//
+// Locking: management operations run with shared.mu held exclusively, and
+// the handlers of peer messages with shared.mu held shared, several at a
+// time, and those retire entries too. So every method takes mu, and the
+// size counter lets the peer path skip the lock while the index is empty.
+// No method holds mu across a propagation, which can retire entries.
 type pathIndex struct {
+	mu        sync.Mutex
+	size      atomic.Int64
 	byUUID    map[uuid.UUID]*pathIndexEntry
 	byKey     map[localPathKey]map[*pathIndexEntry]struct{}
 	byWritten map[*table.Path]*pathIndexEntry
 }
 
 func newPathIndex() *pathIndex {
-	return &pathIndex{
-		byUUID:    make(map[uuid.UUID]*pathIndexEntry),
-		byKey:     make(map[localPathKey]map[*pathIndexEntry]struct{}),
-		byWritten: make(map[*table.Path]*pathIndexEntry),
-	}
+	x := &pathIndex{}
+	x.resetLocked()
+	return x
 }
 
-func (x *pathIndex) len() int { return len(x.byUUID) }
+// resetLocked gives the index new empty maps. Go maps keep the buckets of
+// their largest size, so an index that empties drops them.
+func (x *pathIndex) resetLocked() {
+	x.byUUID = make(map[uuid.UUID]*pathIndexEntry)
+	x.byKey = make(map[localPathKey]map[*pathIndexEntry]struct{})
+	x.byWritten = make(map[*table.Path]*pathIndexEntry)
+}
 
-func (x *pathIndex) remove(e *pathIndexEntry) {
+func (x *pathIndex) len() int { return int(x.size.Load()) }
+
+func (x *pathIndex) removeLocked(e *pathIndexEntry) {
+	if x.byUUID[e.id] != e {
+		return
+	}
 	delete(x.byUUID, e.id)
 	delete(x.byWritten, e.written)
 	if set := x.byKey[e.key]; set != nil {
@@ -104,10 +119,22 @@ func (x *pathIndex) remove(e *pathIndexEntry) {
 			delete(x.byKey, e.key)
 		}
 	}
+	x.size.Store(int64(len(x.byUUID)))
+	if len(x.byUUID) == 0 {
+		x.resetLocked()
+	}
+}
+
+func (x *pathIndex) remove(e *pathIndexEntry) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	x.removeLocked(e)
 }
 
 // add records the UUID of a path AddPath wrote and the table holds.
 func (x *pathIndex) add(id uuid.UUID, written *table.Path, vrf string) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
 	e := &pathIndexEntry{id: id, key: localPathKeyOf(written), written: written, vrf: vrf}
 	x.byUUID[id] = e
 	set := x.byKey[e.key]
@@ -117,6 +144,51 @@ func (x *pathIndex) add(id uuid.UUID, written *table.Path, vrf string) {
 	}
 	set[e] = struct{}{}
 	x.byWritten[written] = e
+	x.size.Store(int64(len(x.byUUID)))
+}
+
+func (x *pathIndex) lookup(id uuid.UUID) (*pathIndexEntry, bool) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	e, ok := x.byUUID[id]
+	return e, ok
+}
+
+// watched reports whether a slot has an entry.
+func (x *pathIndex) watched(key localPathKey) bool {
+	if x.len() == 0 {
+		return false
+	}
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	return len(x.byKey[key]) > 0
+}
+
+// retire ends the entry of a path the global table removed. Versions of one
+// written path share its entry, so the removed path is looked up by its
+// root.
+func (x *pathIndex) retire(removed *table.Path) {
+	if removed == nil || x.len() == 0 {
+		return
+	}
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	if e, ok := x.byWritten[removed.Root()]; ok {
+		x.removeLocked(e)
+	}
+}
+
+// retireReplaced ends the entry of the path an update removed, unless the
+// path that took its place is a version of the same written path, such as
+// a zebra next-hop refresh or a policy copy.
+func (x *pathIndex) retireReplaced(removed, installed *table.Path) {
+	if removed == nil || x.len() == 0 {
+		return
+	}
+	if installed != nil && !installed.IsWithdraw && installed.Root() == removed.Root() {
+		return
+	}
+	x.retire(removed)
 }
 
 // holds reports whether the paths of a slot include a version of written.
@@ -132,6 +204,8 @@ func holds(held []*table.Path, written *table.Path) bool {
 // reconcile ends the entries of a slot whose path is not among the paths
 // the slot holds now. It is linear in the size of the slot.
 func (x *pathIndex) reconcile(key localPathKey, held []*table.Path) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
 	set := x.byKey[key]
 	if len(set) == 0 {
 		return
@@ -142,34 +216,46 @@ func (x *pathIndex) reconcile(key localPathKey, held []*table.Path) {
 	}
 	for e := range set {
 		if _, ok := in[e.written]; !ok {
-			x.remove(e)
+			x.removeLocked(e)
 		}
 	}
 }
 
-// endFamilies ends the entries of the families.
-func (x *pathIndex) endFamilies(families []bgp.Family) {
+// entries returns the entries the function selects.
+func (x *pathIndex) entries(keep func(*pathIndexEntry) bool) []*pathIndexEntry {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	var out []*pathIndexEntry
 	for _, e := range x.byUUID {
-		if slices.Contains(families, e.key.family) {
-			x.remove(e)
+		if keep(e) {
+			out = append(out, e)
 		}
 	}
+	return out
 }
 
-// localPathsAt returns the local paths the global table holds in the slot
-// of key, reading the one destination of p.
-func (s *BgpServer) localPathsAt(p *table.Path, key localPathKey) []*table.Path {
+// slotPathsAt returns the paths the global table holds in the slot of key,
+// reading the one destination of p. A slot has the full source, so it holds
+// local paths and paths AddPath wrote with a peer identity; a path learned
+// from a peer carries the local router ID that AddPath leaves unset.
+func (s *BgpServer) slotPathsAt(p *table.Path, key localPathKey) []*table.Path {
 	dest := s.globalRib.GetDestination(p)
 	if dest == nil {
 		return nil
 	}
 	var out []*table.Path
 	for _, rp := range dest.GetAllKnownPathList() {
-		if rp.IsLocal() && localPathKeyOf(rp) == key {
+		if localPathKeyOf(rp) == key {
 			out = append(out, rp)
 		}
 	}
 	return out
+}
+
+// installedVersion returns the version of a written path the global table
+// holds, or nil. It reads the one destination of the path.
+func (s *BgpServer) installedVersion(written *table.Path) *table.Path {
+	return s.globalRib.GetDestination(written).PathFromOrigin(written)
 }
 
 // propagateLocal writes local paths to the global table and keeps the index
@@ -198,7 +284,7 @@ func (s *BgpServer) propagateLocal(paths []*table.Path, capture bool) []*table.P
 	}
 	for i, p := range paths {
 		key := localPathKeyOf(p)
-		watched := len(s.pathIndex.byKey[key]) > 0
+		watched := s.pathIndex.watched(key)
 		take := capture && !p.IsWithdraw
 		if !watched && !take {
 			continue
@@ -206,7 +292,7 @@ func (s *BgpServer) propagateLocal(paths []*table.Path, capture bool) []*table.P
 		flush(i)
 		run = i + 1
 		s.propagateUpdate(nil, []*table.Path{p})
-		after := s.localPathsAt(p, key)
+		after := s.slotPathsAt(p, key)
 		if watched {
 			s.pathIndex.reconcile(key, after)
 		}
@@ -219,34 +305,30 @@ func (s *BgpServer) propagateLocal(paths []*table.Path, capture bool) []*table.P
 }
 
 // deleteByUUIDs withdraws the paths of the UUIDs and reports whether it
-// found any. A UUID deletes every local path in the slot of its path, as
-// several can share one with no_implicit_withdraw, except a path that a
-// tagged write owns: only the UUID of that write deletes it. A UUID whose
-// path is gone ends and deletes nothing.
+// found any. A UUID deletes the one path it names, the version of its
+// written path the table holds, and no other path of its slot, even when
+// no_implicit_withdraw lets several share it. A path that a tagged write
+// owns is deleted only by the UUID of that write. A UUID whose path is gone
+// ends and deletes nothing.
 func (s *BgpServer) deleteByUUIDs(ids []uuid.UUID) bool {
 	found := false
 	for _, id := range ids {
-		e, ok := s.pathIndex.byUUID[id]
+		e, ok := s.pathIndex.lookup(id)
 		if !ok {
 			continue
 		}
-		held := s.localPathsAt(e.written, e.key)
-		if !holds(held, e.written) {
+		rp := s.installedVersion(e.written)
+		if rp == nil {
 			s.pathIndex.remove(e)
 			continue
 		}
 		found = true
-		withdrawals := make([]*table.Path, 0, len(held))
-		for _, rp := range held {
-			if s.generations.owns(rp) {
-				continue
-			}
-			withdrawals = append(withdrawals, rp.Clone(true))
+		if !s.generations.owns(rp) {
+			// The withdrawal shares the origin of rp, so the table removes
+			// exactly rp, and propagateUpdate retires the entry.
+			s.propagateUpdate(nil, []*table.Path{rp.Clone(true)})
+			s.pathIndex.remove(e)
 		}
-		// The whole slot is withdrawn, so its entries are reconciled once,
-		// after the list, not after each withdrawal.
-		s.propagateUpdate(nil, withdrawals)
-		s.pathIndex.reconcile(e.key, s.localPathsAt(e.written, e.key))
 	}
 	return found
 }
@@ -255,8 +337,8 @@ func (s *BgpServer) deleteByUUIDs(ids []uuid.UUID) bool {
 // longer holds. DeleteVrf does not withdraw every family: a VPN FlowSpec
 // path outlives its VRF, and keeps its UUID.
 func (s *BgpServer) reconcileVrf(name string) {
-	for _, e := range s.pathIndex.byUUID {
-		if e.vrf == name && !holds(s.localPathsAt(e.written, e.key), e.written) {
+	for _, e := range s.pathIndex.entries(func(e *pathIndexEntry) bool { return e.vrf == name }) {
+		if s.installedVersion(e.written) == nil {
 			s.pathIndex.remove(e)
 		}
 	}
@@ -270,18 +352,27 @@ func (s *BgpServer) uuidsOf(rib *table.Table, family bgp.Family, filtered bool) 
 	if s.pathIndex.len() == 0 || rib == nil {
 		return nil
 	}
+	x := s.pathIndex
 	ids := make(map[*table.Path]uuid.UUID)
 	if filtered {
+		var roots []*table.Path
 		for _, d := range rib.GetDestinations() {
 			for _, rp := range d.GetAllKnownPathList() {
-				if e, ok := s.pathIndex.byWritten[rp.Root()]; ok {
-					ids[e.written] = e.id
-				}
+				roots = append(roots, rp.Root())
+			}
+		}
+		x.mu.Lock()
+		defer x.mu.Unlock()
+		for _, r := range roots {
+			if e, ok := x.byWritten[r]; ok {
+				ids[e.written] = e.id
 			}
 		}
 		return ids
 	}
-	for p, e := range s.pathIndex.byWritten {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	for p, e := range x.byWritten {
 		if e.key.family == family {
 			ids[p] = e.id
 		}

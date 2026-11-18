@@ -208,9 +208,8 @@ func TestUUIDSlotHasTheSource(t *testing.T) {
 	require.NoError(t, deleteUUID(s, a))
 }
 
-// With no_implicit_withdraw, paths of one slot coexist. A delete by either
-// UUID deletes every local path of the slot, as it did before, and both
-// UUIDs end.
+// With no_implicit_withdraw, paths of one slot coexist. A delete by a UUID
+// deletes only the path of that UUID; the other path and its UUID stay.
 func TestUUIDWithNoImplicitWithdraw(t *testing.T) {
 	s := startContextServer(t)
 	a := addIndexed(t, s, "", indexPath(t, bgp.RF_IPv4_UC, "10.5.0.0/24", "10.0.0.1", noImplicitWithdraw))
@@ -218,8 +217,30 @@ func TestUUIDWithNoImplicitWithdraw(t *testing.T) {
 	require.Len(t, localPaths(t, s, bgp.RF_IPv4_UC), 2)
 	require.Equal(t, 2, s.pathIndex.len())
 	require.NoError(t, deleteUUID(s, a))
+	require.Equal(t, []string{"10.5.0.0/24 10.0.0.2"}, localPaths(t, s, bgp.RF_IPv4_UC))
+	require.Equal(t, 1, s.pathIndex.len())
+	require.EqualError(t, deleteUUID(s, a), cannotFind)
+	require.NoError(t, deleteUUID(s, b))
 	require.Empty(t, localPaths(t, s, bgp.RF_IPv4_UC))
-	require.EqualError(t, deleteUUID(s, b), cannotFind)
+	require.Zero(t, s.pathIndex.len())
+}
+
+// DeleteAll withdraws the local paths only. A path AddPath wrote with a peer
+// address stays installed, and keeps its UUID; the local path's UUID ends.
+func TestDeleteAllKeepsUUIDOfPathWithPeerAddress(t *testing.T) {
+	s := startContextServer(t)
+	local := addIndexed(t, s, "", indexPath(t, bgp.RF_IPv4_UC, "10.5.1.0/24", "10.0.0.1"))
+	withPeer := indexPath(t, bgp.RF_IPv4_UC, "10.5.1.0/24", "10.0.0.2", withSource(2, "1.1.1.2"))
+	withPeer.PeerAddress = netip.MustParseAddr("1.1.1.2")
+	remote := addIndexed(t, s, "", withPeer)
+	require.Equal(t, 2, s.pathIndex.len())
+	family := bgp.RF_IPv4_UC
+	require.NoError(t, s.DeletePath(apiutil.DeletePathRequest{DeleteAll: true, DeleteFamily: &family}))
+	require.Equal(t, []string{"10.5.1.0/24 10.0.0.2"}, localPaths(t, s, bgp.RF_IPv4_UC))
+	require.Equal(t, 1, s.pathIndex.len())
+	require.EqualError(t, deleteUUID(s, local), cannotFind)
+	require.NoError(t, deleteUUID(s, remote))
+	require.Empty(t, localPaths(t, s, bgp.RF_IPv4_UC))
 	require.Zero(t, s.pathIndex.len())
 }
 
@@ -523,9 +544,9 @@ func hostPaths(base uint32, n int, withdraw bool) []*table.Path {
 	return paths
 }
 
-// BenchmarkDeleteCoexistingSlot deletes by one UUID a slot of k coexisting
-// no_implicit_withdraw paths, each with its UUID: the whole slot is
-// withdrawn and its entries reconciled once.
+// BenchmarkDeleteCoexistingSlot deletes by its UUID one path of a slot of k
+// coexisting no_implicit_withdraw paths, each with its UUID: only that path
+// is withdrawn, and the others keep their entries.
 func BenchmarkDeleteCoexistingSlot(b *testing.B) {
 	for _, k := range []int{1, 10, 100, 1000} {
 		b.Run("k="+strconv.Itoa(k), func(b *testing.B) {
@@ -542,6 +563,14 @@ func BenchmarkDeleteCoexistingSlot(b *testing.B) {
 				}
 				b.StartTimer()
 				if err := deleteUUID(s, first); err != nil {
+					b.Fatal(err)
+				}
+				b.StopTimer()
+				if s.pathIndex.len() != k-1 {
+					b.Fatalf("%d entries left, want %d", s.pathIndex.len(), k-1)
+				}
+				family := bgp.RF_IPv4_UC
+				if err := s.DeletePath(apiutil.DeletePathRequest{DeleteAll: true, DeleteFamily: &family}); err != nil {
 					b.Fatal(err)
 				}
 			}

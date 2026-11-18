@@ -461,21 +461,6 @@ func fingerprint(kind api.GenerationCommandKind, vrfID string, paths []*table.Pa
 	return sum
 }
 
-// localPathAt returns the local path the global RIB holds at the route key
-// of p, or nil. It reads one destination.
-func (s *BgpServer) localPathAt(p *table.Path, id uint32) *table.Path {
-	dest := s.globalRib.GetDestination(p)
-	if dest == nil {
-		return nil
-	}
-	for _, rp := range dest.GetAllKnownPathList() {
-		if rp.IsLocal() && rp.RemoteID() == id {
-			return rp
-		}
-	}
-	return nil
-}
-
 // addTaggedPaths applies one tagged command. It runs in the management loop.
 // Nothing is applied unless every path is valid.
 func (s *BgpServer) addTaggedPaths(vrfID string, paths []*table.Path, tag *apiutil.GenerationTag, kind api.GenerationCommandKind) ([]apiutil.AddPathResponse, error) {
@@ -523,6 +508,11 @@ func (s *BgpServer) addTaggedPaths(vrfID string, paths []*table.Path, tag *apiut
 
 	if err := s.fixupApiPath(vrfID, paths); err != nil {
 		return nil, genErr(codes.InvalidArgument, ErrGenerationInvalid, "%v", err)
+	}
+	// Tagged paths have no Adj-RIB-In owner to keep their path IDs, so the
+	// table releases the ID when they are withdrawn.
+	for _, p := range paths {
+		p.SetDropped(true)
 	}
 	ids := make([]uuid.UUID, len(paths))
 	for i := range ids {
@@ -581,7 +571,7 @@ func (s *BgpServer) addTaggedPaths(vrfID string, paths []*table.Path, tag *apiut
 // withdrawGenerationPath withdraws a current tagged path and marks it
 // deleted. It reads one destination.
 func (s *BgpServer) withdrawGenerationPath(gp *genPath, now time.Time) {
-	if rp := s.localPathAt(gp.path, gp.key.id); rp != nil {
+	if rp := s.installedVersion(gp.path); rp != nil {
 		s.propagateLocal([]*table.Path{rp.Clone(true)}, false)
 	}
 	s.generations.endRoute(gp.key, api.GenerationPathState_GENERATION_PATH_STATE_DELETED, uuid.Nil, nil, now)
@@ -798,7 +788,7 @@ func (s *BgpServer) generationStatus(k genKey) (*api.GenerationStatus, error) {
 			AddedAt:        timestampOrNil(gp.addedAt),
 			EndedAt:        timestampOrNil(gp.endedAt),
 		}
-		ap.Present = gp.state == api.GenerationPathState_GENERATION_PATH_STATE_CURRENT && s.localPathAt(gp.path, gp.key.id) != nil
+		ap.Present = gp.state == api.GenerationPathState_GENERATION_PATH_STATE_CURRENT && s.installedVersion(gp.path) != nil
 		st.Paths = append(st.Paths, ap)
 	}
 	return st, nil

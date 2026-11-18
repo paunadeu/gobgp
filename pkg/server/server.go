@@ -1539,6 +1539,9 @@ func (s *BgpServer) propagateUpdate(peer *peer, pathList []*table.Path) {
 				if s.zclient != nil && !rs && !path.IsWithdraw {
 					path.OriginInfo().LocRIBUpdate.Store(time.Since(zebraEpoch).Nanoseconds())
 				}
+				if !rs {
+					s.pathIndex.retireReplaced(dsts[0].Replaced, path)
+				}
 				// Report the path to the post-policy watchers only when it is
 				// not the one the table already held. An inbound soft reset
 				// replays the whole Adj-RIB-In, and a subscriber that got the
@@ -1561,6 +1564,9 @@ func (s *BgpServer) propagateUpdate(peer *peer, pathList []*table.Path) {
 				// peers with ADD-PATH send enabled get them too.
 				s.propagateUpdateToNeighbors(rib, peer, path, dsts[:1], true)
 				for _, u := range dsts[1:] {
+					if !rs {
+						s.pathIndex.retire(u.Replaced)
+					}
 					if w := u.GetWithdrawnPath(); len(w) > 0 {
 						s.propagateUpdateToNeighbors(rib, peer, w[0], []*table.Update{u}, true)
 					}
@@ -3124,7 +3130,7 @@ func (s *BgpServer) deletePathOutcome(ctx context.Context, req apiutil.DeletePat
 				return err
 			}
 			for _, id := range rest {
-				if e, ok := s.pathIndex.byUUID[id]; ok {
+				if e, ok := s.pathIndex.lookup(id); ok {
 					if err := s.checkUntaggedFamilies(e.key.family); err != nil {
 						return err
 					}
@@ -3148,7 +3154,6 @@ func (s *BgpServer) deletePathOutcome(ctx context.Context, req apiutil.DeletePat
 					deletePathList = append(deletePathList, path.Clone(true))
 				}
 			}
-			s.pathIndex.endFamilies(families)
 			s.propagateUpdate(nil, deletePathList)
 			s.generations.endFamilies(families, time.Now().UTC())
 			return nil
